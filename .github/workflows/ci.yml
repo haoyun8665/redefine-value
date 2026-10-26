@@ -1,0 +1,44 @@
+name: CI
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - run: bash ./scripts/test.sh --web-only
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Run JavaScript and native tests
+        run: bash ./scripts/test.sh
+      - name: Build Universal app
+        run: RV_ARCHS="arm64 x86_64" zsh ./build.sh
+      - name: Package app
+        run: ditto -c -k --sequesterRsrc --keepParent "dist/重新定义价值.app" "dist/redefine-value-macos-universal.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: redefine-value-macos-universal
+          path: dist/redefine-value-macos-universal.zip
+          if-no-files-found: error
+          retention-days: 14
