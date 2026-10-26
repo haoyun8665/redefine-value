@@ -34,7 +34,7 @@ cat > "$task_bundle/Contents/Info.plist" <<PLIST
 <key>CFBundleDisplayName</key><string>重新定义价值</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$task_version</string>
-<key>CFBundleVersion</key><string>19</string>
+<key>CFBundleVersion</key><string>32</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

@@ -10,16 +10,15 @@ window.nativeEvent=async(name,data)=>{if(name==='financeLocked'){financeInfo=dat
 const icons={lock:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4"/>',unlock:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 7.6-1.7"/>',settings:'<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="#100b1a"/><circle cx="15" cy="17" r="3" fill="#100b1a"/>',hide:'<path d="M5 12h14"/>',prev:'<path d="m14 6-6 6 6 6"/>',next:'<path d="m10 6 6 6-6 6"/>',refresh:'<path d="M20 8a8 8 0 1 0 0 8M20 3v5h-5"/>',bell:'<path d="M5 17h14l-2-4V9a5 5 0 0 0-10 0v4l-2 4ZM10 21h4"/>'};
 const svg=name=>`<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name]}</svg>`;
 for(const id of ['settings','hide','prev','next','refresh'])$(id).innerHTML=svg(id);
-const defaultState={tasks:[],projects:[],business:[],development:[],finance:[],memos:[],thoughts:{},activeDimension:'all',listStyle:'long',hiddenCalendars:[],mode:'desktop',locked:false,reflectionEnabled:false,reflectionTime:'21:00',prompt:'今天，什么值得记住？',eventsEnabled:false,showDemo:true,calendarExpanded:true};
+const defaultState={tasks:[],projects:[],business:[],development:[],finance:[],memos:[],thoughts:{},activeDimension:'all',listStyle:'long',hiddenCalendars:[],mode:'desktop',locked:false,reflectionEnabled:false,reflectionTime:'21:00',prompt:'今天，什么值得记住？',eventsEnabled:false,showDemo:true,calendarExpanded:true,feishuAgendaExpanded:false,timeManagementExpanded:true};
 let state=structuredClone(defaultState),selected=new Date(),view=new Date(selected.getFullYear(),selected.getMonth(),1),cache={},calendars=[],connected=false,demo=false,syncing=false,syncAgain=false,syncError='',appId='',source='api',cliInfo={},dirty=false,saveTimer,toastTimer,syncGeneration=0;
 let financeUnlocked=false,financeInfo={configured:false,locked:true,available:true},financeLockPromise=null,financeEpoch=0,financeIdleTimer;
 let editingTask=null,editingProject=null,showArchived=false,editingFinance=null,showFinanceArchived=false,reviewEditDate='';
 let editingMemo=null,showMemoArchived=false;
 let currentDay=C.key(new Date()),dayTimer;
 const dimensions=['all','tasks','projects','business','development','review','finance','memo'];
-const recordConfig={business:{label:'商务推进',subject:'客户 / 合作方',notes:'下一步跟进',statuses:{planned:'待跟进',working:'推进中',waiting:'等反馈',done:'已完成'}},development:{label:'开发日程',subject:'所属项目',notes:'开发内容 / 验收目标',statuses:{planned:'计划中',working:'开发中',blocked:'有卡点',done:'已完成'}}};
+const recordConfig={business:{label:'商务推进',subject:'客户 / 合作方',notes:'进度备注',statuses:{planned:'待跟进',working:'推进中',waiting:'等反馈',done:'已完成'}},development:{label:'开发日程',subject:'所属项目',notes:'开发内容 / 验收目标',statuses:{planned:'计划中',working:'开发中',blocked:'有卡点',done:'已完成'}}};
 let editingRecord=null;const recordArchiveView={business:false,development:false};
-const projectStatus={active:'进行中',waiting:'待推进',blocked:'有卡点',done:'已完成'};
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const time=d=>new Date(d).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});
 function toast(s){$('toast').textContent=s;$('toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('show'),2600);}
@@ -37,6 +36,10 @@ function persist(){
   try{localStorage.setItem('zaichang-preview',snapshot);dirty=false;$('save-status').textContent='已保存在此浏览器';}catch{$('save-status').textContent='无法保存，请导出备份';}
 }
 function save(){dirty=true;$('save-status').textContent='保存中…';clearTimeout(saveTimer);saveTimer=setTimeout(persist,220);}
+function calendarSourceLine(records,source){
+  if(!records.length)return '';
+  return `<span class="day-event" data-schedule-source="${source}"><span class="day-event-label">${escape(records[0].title)}</span>${records.length>1?`<small class="day-source-more">+${records.length-1}</small>`:''}</span>`;
+}
 function renderCalendar(){
   $('month').textContent=(view.getMonth()+1)+'月';$('year').textContent=view.getFullYear();
   const offset=(view.getDay()+6)%7,days=new Date(view.getFullYear(),view.getMonth()+1,0).getDate(),count=Math.ceil((offset+days)/7)*7;
@@ -45,8 +48,7 @@ function renderCalendar(){
   for(let i=0;i<count;i++){
     const d=new Date(view.getFullYear(),view.getMonth(),i-offset+1),k=C.key(d),ev=C.onDay(all,d),thought=Boolean(state.thoughts[k]?.trim());
     const local=[...C.recordsOnDay(state.business,d),...C.recordsOnDay(state.development,d),...state.tasks.filter(t=>t.date===k&&!t.done)],total=ev.length+local.length;
-    const title=ev[0]?.title||local[0]?.title||'',color=/^#[0-9a-f]{6}$/i.test(ev[0]?.color)?ev[0].color:'#b18aff';
-    html+=`<button class="day ${d.getMonth()!==view.getMonth()?'outside ':''}${k===C.key(new Date())?'today ':''}${k===C.key(selected)?'selected ':''}${thought?'has-thought':''}" data-day="${k}" aria-label="${k}${total?'，'+total+'项安排':''}${thought?'，有复盘':''}" aria-pressed="${k===C.key(selected)}" title="${escape([...ev,...local].map(e=>e.title).join(' · '))}"><span class="day-number">${d.getDate()}</span><span class="day-event ${total>1?'multiple':''}" style="--day-color:${color}">${escape(title)}</span>${total>1?'<span class="day-more">+'+(total-1)+'</span>':''}</button>`;
+    html+=`<button class="day ${d.getMonth()!==view.getMonth()?'outside ':''}${k===C.key(new Date())?'today ':''}${k===C.key(selected)?'selected ':''}${thought?'has-thought':''}" data-day="${k}" aria-label="${k}${total?'，'+total+'项安排':''}${thought?'，有复盘':''}" aria-pressed="${k===C.key(selected)}" title="${escape([...ev.map(e=>'飞书：'+e.title),...local.map(e=>'本机：'+e.title)].join(' · '))}"><span class="day-number">${d.getDate()}</span>${calendarSourceLine(ev,'feishu')}${calendarSourceLine(local,'local')}</button>`;
   }
   $('calendar').innerHTML=html;$('calendar').classList.toggle('six-weeks',count===42);
   const last=cache[C.monthKey(view)]?.syncedAt;
@@ -54,24 +56,31 @@ function renderCalendar(){
   $('connection').textContent=info;$('connection').className='connection'+(connected?' connected':'')+(syncError?' error':'');$('connection').title=syncError||'点击管理飞书连接';$('refresh').disabled=syncing;
 }
 function renderAgenda(){
-  const isToday=C.key(selected)===C.key(new Date());$('agenda-title').textContent='飞书日程';
-  const list=C.onDay(events(),selected);$('event-count').textContent=(isToday?'今天':(selected.getMonth()+1)+'月'+selected.getDate()+'日')+' · '+['周日','周一','周二','周三','周四','周五','周六'][selected.getDay()]+(list.length?' · '+list.length+'项':'');
-  $('agenda').innerHTML=list.length?list.map((e,i)=>`<button class="event ${e.end<Date.now()?'past':''}" data-event="${i}"><div class="event-time">${e.allDay?'全天':time(e.start)}${e.allDay?'':`<small>${time(e.end)}</small>`}</div><div class="event-body" style="--event-color:${/^#[0-9a-f]{6}$/i.test(e.color)?e.color:'#b18aff'}"><div class="event-title">${escape(e.title)}</div><div class="event-meta">${escape([e.calendar,e.location].filter(Boolean).join(' · '))}</div></div></button>`).join(''):
-  `<div class="empty"><strong>${connected||demo?'这一天，还留着一些空白。':'把飞书日程贴到桌面。'}</strong>${connected||demo?'给重要的事，也给自己一点时间。':'连接后，安排会自动跟随飞书更新。'}</div>`;
-  $('agenda').querySelectorAll('[data-event]').forEach(b=>b.addEventListener('click',()=>showEvent(list[Number(b.dataset.event)])));
+  const el=$('agenda'),scroll=el.scrollTop||0;
+  const events=(demo?C.dedupe(sampleEvents()):C.cachedEvents(cache)).filter(e=>!state.hiddenCalendars.includes(e.calendarId)),groups=C.eventTimeline(events,new Date()),list=groups.flatMap(g=>g.items);let index=0;
+  $('agenda-title').textContent='飞书日程';$('event-count').textContent=list.length?groups.length+'天 · '+list.length+'项':'暂无日程';
+  renderAgendaExpansion();
+  el.innerHTML=groups.length?timeline(list,e=>{
+    const start=new Date(e.start),end=new Date(Math.max(e.start,e.end-(e.allDay?1:0))),crossDay=C.key(start)!==C.key(end),shortDate=d=>(d.getMonth()+1)+'/'+d.getDate();
+    const span=crossDay?shortDate(start)+'–'+shortDate(end):'',endTime=(crossDay?shortDate(end)+' ':'')+time(e.end);
+    return `<button class="event ${e.end<Date.now()?'past':''}" data-schedule-source="feishu" data-event="${index++}"><div class="event-time">${e.allDay?'全天':time(e.start)}${e.allDay?'':`<small>${escape(endTime)}</small>`}</div><div class="event-body"><div class="event-title">${escape(e.title)}</div><div class="event-meta">${escape([e.allDay?span:'',e.calendar,e.location].filter(Boolean).join(' · '))}</div></div></button>`;
+  },'',groups):`<div class="empty"><strong>${connected||demo?'今天起暂无已同步日程。':'把飞书日程贴到桌面。'}</strong>${connected||demo?'翻动月历，可同步其他月份的安排。':'连接后，安排会自动跟随飞书更新。'}</div>`;
+  el.scrollTop=scroll;el.querySelectorAll('[data-event]').forEach(b=>b.addEventListener('click',()=>showEvent(list[Number(b.dataset.event)])));renderAgendaLayout();
 }
+function renderAgendaLayout(){document.body.classList.toggle('agenda-fills-space',state.feishuAgendaExpanded===true&&state.timeManagementExpanded===false);}
+function renderAgendaExpansion(){const expanded=state.feishuAgendaExpanded===true;$('feishu-agenda-toggle').setAttribute('aria-expanded',String(expanded));$('feishu-agenda').classList.toggle('expanded',expanded);$('agenda').hidden=!expanded;renderAgendaLayout();}
+$('feishu-agenda-toggle').onclick=()=>{state.feishuAgendaExpanded=!state.feishuAgendaExpanded;renderAgendaExpansion();save();};
 function dateBadge(date){
   if(!date)return '<span class="date-badge undated">未标<small>日期</small></span>';
   const today=date===C.key(new Date());return `<time class="date-badge ${today?'is-today':''}" datetime="${escape(date)}" title="${escape(date)}"><span>${date.slice(5).replace('-','/')}</span><small>${today?'今天':date.slice(0,4)}</small></time>`;
 }
-function timeline(records,row,empty='暂无记录'){
-  const groups=C.timelineGroups(records);
+function timeline(records,row,empty='暂无记录',groups=C.timelineGroups(records)){
   return groups.length?groups.map(g=>`<div class="timeline-group" data-timeline-date="${escape(g.date)}">${dateBadge(g.date)}<div class="timeline-items">${g.items.map(row).join('')}</div></div>`).join(''):`<div class="dimension-empty">${empty}</div>`;
 }
-const workLabels={tasks:'待办',projects:'项目',business:'商务',development:'开发'};
+const workLabels={tasks:'待办',projects:'项目',business:'商务',development:'开发',review:'复盘',memo:'备忘'};
 const workBadge=label=>label?`<small class="work-kind">${label}</small>`:'';
 function taskRow(t,label=''){
-  return `<div class="task ${t.done?'done':''}" data-edit-kind="tasks" data-edit-id="${escape(t.id)}"><button class="task-check" role="checkbox" aria-checked="${Boolean(t.done)}" aria-label="${escape(t.title)}" data-check="${escape(t.id)}">${t.done?'✓':''}</button><button class="task-copy" aria-label="编辑待办：${escape(t.title)}"><span class="task-title">${workBadge(label)}${escape(t.title)}</span>${t.notes?`<span class="work-note">${escape(t.notes)}</span>`:''}</button><button class="task-delete" data-delete="${escape(t.id)}" aria-label="删除 ${escape(t.title)}" title="删除事项">×</button></div>`;
+  return `<div class="task ${t.done?'done':''}" data-edit-kind="tasks" data-edit-id="${escape(t.id)}"><button class="task-check" role="checkbox" aria-checked="${Boolean(t.done)}" aria-label="${escape(t.title)}" data-check="${escape(t.id)}">${t.done?'✓':''}</button><button class="task-copy" data-task-edit="${escape(t.id)}" aria-label="编辑待办：${escape(t.title)}"><span class="task-title">${workBadge(label)}${escape(t.title)}</span>${t.notes?`<span class="overview-note" title="${escape(t.notes)}">${escape(t.notes)}</span>`:''}${t.notes?`<span class="work-note">${escape(t.notes)}</span>`:''}</button><button class="task-delete" data-delete="${escape(t.id)}" aria-label="删除 ${escape(t.title)}" title="删除事项">×</button></div>`;
 }
 function renderTasks(){
   const pending=state.tasks.filter(t=>!t.done).length;
@@ -82,12 +91,15 @@ function openTask(id=null){
   const t=state.tasks.find(x=>x.id===id);editingTask=t?.id||null;$('task-dialog-title').textContent=t?'编辑待办':'新增待办';$('task-title').value=t?.title||'';$('task-date').value=t?.date||C.key(new Date());$('task-notes').value=t?.notes||'';$('task-feedback').textContent='';$('task-dialog').showModal();$('task-title').focus();
 }
 function renderAll(){
-  const el=$('all-records'),scroll=el.scrollTop||0;
-  el.innerHTML=timeline(C.workFeed(state),r=>r.kind==='tasks'?taskRow(r,workLabels[r.kind]):r.kind==='projects'?projectRow(r,workLabels[r.kind]):recordRow(r.kind,r,workLabels[r.kind]),'待办、项目、商务和开发的记录会汇总在这里。');el.scrollTop=scroll;
+  const el=$('all-records'),scroll=el.scrollTop||0,feed=C.workFeed(state);
+  el.innerHTML=timeline(feed,r=>r.kind==='tasks'?taskRow(r,workLabels[r.kind]):r.kind==='projects'?projectRow(r,workLabels[r.kind]):r.kind==='review'||r.kind==='memo'?personalOverviewRow(r):recordRow(r.kind,r,workLabels[r.kind]),'待办、项目、商务、开发、复盘和备忘会按顺序汇总在这里。',C.overviewGroups(feed));el.scrollTop=scroll;
+}
+function personalOverviewRow(r){
+  return `<div class="overview-personal" data-edit-kind="${r.kind}" data-edit-id="${escape(r.id)}"><span class="overview-personal-marker" aria-hidden="true">${r.kind==='review'?'◇':'≡'}</span><button class="overview-personal-edit" aria-label="编辑${workLabels[r.kind]}：${escape(r.date||'未标日期')}"><span class="overview-personal-title">${workLabels[r.kind]}</span><span class="overview-note" title="${escape(r.text)}">${escape(r.text)}</span></button></div>`;
 }
 function projectRow(p,label=''){
-  const done=C.projectDone(p),progress=Math.max(0,Math.min(100,Number(p.progress)||0));
-  return `<div class="project-item ${done?'completed':''}" data-edit-kind="projects" data-edit-id="${escape(p.id)}"><button class="task-check project-check" role="checkbox" aria-checked="${done}" aria-label="${done?'恢复项目':'完成项目'}：${escape(p.name)}" data-project-check="${escape(p.id)}">${done?'✓':''}</button><button class="project-row" data-project="${escape(p.id)}" aria-label="编辑项目：${escape(p.name)}"><div class="project-heading"><span class="project-name">${workBadge(label)}${escape(p.name)}</span><span class="project-status ${p.status==='blocked'?'blocked':''}">${done?'已完成':projectStatus[p.status]||'进行中'} · ${progress}%</span></div>${p.nextStep?`<div class="project-next">${escape(p.nextStep)}</div>`:''}</button></div>`;
+  const done=C.projectDone(p);
+  return `<div class="project-item ${done?'completed':''}" data-edit-kind="projects" data-edit-id="${escape(p.id)}"><button class="task-check project-check" role="checkbox" aria-checked="${done}" aria-label="${done?'恢复项目':'完成项目'}：${escape(p.name)}" data-project-check="${escape(p.id)}">${done?'✓':''}</button><button class="project-row" data-project="${escape(p.id)}" aria-label="编辑项目：${escape(p.name)}"><div class="project-heading"><span class="project-name">${workBadge(label)}${escape(p.name)}</span>${p.nextStep?`<span class="project-note" title="${escape(p.nextStep)}">${escape(p.nextStep)}</span>`:''}</div></button></div>`;
 }
 function renderProjects(){
   const archived=state.projects.filter(p=>p.archived).length;
@@ -97,16 +109,27 @@ function renderProjects(){
 }
 function openProject(id=null){
   const p=state.projects.find(p=>p.id===id);editingProject=p?.id||null;
-  $('project-dialog-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.name||'';$('project-date').value=p?C.recordDate(p)||C.key(new Date()):C.key(new Date());$('project-status').value=p?.status||'active';$('project-progress').value=p?.progress||0;$('project-next').value=p?.nextStep||'';
+  $('project-dialog-title').textContent=p?'编辑项目':'新建项目';$('project-name').value=p?.name||'';$('project-date').value=p?C.recordDate(p)||C.key(new Date()):C.key(new Date());$('project-next').value=p?.nextStep||'';
   $('archive-project').hidden=!p;$('archive-project').textContent=p?.archived?'恢复项目':'归档项目';$('project-dialog').showModal();$('project-name').focus();
 }
 function renderDimensions(){
   const active=dimensions.includes(state.activeDimension)?state.activeDimension:'all';state.activeDimension=active;
-  $('selected-date').textContent='累计记录 · 最新在上';
+  renderTimeManagement();
   state.listStyle=state.listStyle==='short'?'short':'long';document.body.classList.toggle('long-list',state.listStyle==='long');$('view-controls').hidden=!['all','tasks','projects','business','development'].includes(active);for(const style of ['short','long'])$('view-'+style).setAttribute('aria-pressed',String(state.listStyle===style));
   const counts={all:C.workFeed(state).length,tasks:state.tasks.filter(t=>!t.done).length,projects:state.projects.filter(p=>!p.archived&&!C.projectDone(p)).length,business:state.business.filter(r=>!r.archived&&r.status!=='done').length,development:state.development.filter(r=>!r.archived&&r.status!=='done').length,review:Object.values(state.thoughts).filter(t=>typeof t==='string'&&t.trim()).length,finance:financeUnlocked?state.finance.filter(r=>!r.archived&&r.status!=='settled').length:'锁',memo:state.memos.filter(m=>!m.archived).length};
   for(const kind of dimensions){$('panel-'+kind).hidden=kind!==active;const tab=$('tab-'+kind);tab.setAttribute('aria-selected',String(kind===active));tab.tabIndex=kind===active?0:-1;$('badge-'+kind).textContent=counts[kind]||'';}renderAll();
 }
+function renderTimeManagement(){
+  const expanded=state.timeManagementExpanded!==false;
+  $('time-management-toggle').setAttribute('aria-expanded',String(expanded));$('time-management-content').hidden=!expanded;$('time-management').classList.toggle('collapsed',!expanded);
+  renderAgendaLayout();
+}
+async function toggleTimeManagement(){
+  state.timeManagementExpanded=state.timeManagementExpanded===false;renderTimeManagement();
+  if(!state.timeManagementExpanded&&financeUnlocked)await lockFinancialView();
+  save();
+}
+$('time-management-toggle').onclick=toggleTimeManagement;
 function switchDimension(kind){if(!dimensions.includes(kind))return;if(state.activeDimension==='finance'&&kind!=='finance')void lockFinancialView();else if(dirty)persist();state.activeDimension=kind;renderDimensions();save();}
 function renderRecords(kind){
   const config=recordConfig[kind],list=state[kind].filter(r=>Boolean(r.archived)===recordArchiveView[kind]),archived=state[kind].filter(r=>r.archived).length;
@@ -116,16 +139,16 @@ function renderRecords(kind){
 }
 function recordRow(kind,r,label=''){
   const config=recordConfig[kind],done=r.status==='done',clock=r.startTime?(r.startTime+(r.endTime?'–'+r.endTime:'')):(r.endTime?'截至 '+r.endTime:'');
-  return `<div class="daily-record ${done?'completed':''}" data-edit-kind="${kind}" data-edit-id="${escape(r.id)}"><button class="task-check record-check" role="checkbox" aria-checked="${done}" aria-label="${done?'恢复':'完成'}${config.label}：${escape(r.title)}" data-record-check="${escape(r.id)}">${done?'✓':''}</button><button class="record-body" data-record-edit="${escape(r.id)}" aria-label="编辑${config.label}：${escape(r.title)}"><div class="record-heading"><strong>${workBadge(label)}${escape(r.title)}</strong><span class="record-status">${config.statuses[r.status]||config.statuses.planned}</span></div>${r.subject||clock||r.notes?`<div class="record-meta short-record-meta">${escape([clock,r.subject,r.notes].filter(Boolean).join(' · '))}</div>`:''}${r.subject||clock?`<div class="record-meta long-record-meta">${escape([clock,r.subject].filter(Boolean).join(' · '))}</div>`:''}${r.notes?`<div class="work-note">${escape(r.notes)}</div>`:''}</button></div>`;
+  return `<div class="daily-record ${done?'completed':''}" data-edit-kind="${kind}" data-edit-id="${escape(r.id)}"><button class="task-check record-check" role="checkbox" aria-checked="${done}" aria-label="${done?'恢复':'完成'}${config.label}：${escape(r.title)}" data-record-check="${escape(r.id)}">${done?'✓':''}</button><button class="record-body" data-record-edit="${escape(r.id)}" aria-label="编辑${config.label}：${escape(r.title)}"><div class="record-heading"><strong>${workBadge(label)}${escape(r.title)}</strong><span class="record-status">${config.statuses[r.status]||config.statuses.planned}</span>${(label||kind==='business')&&r.notes?`<span class="overview-note" title="${escape(r.notes)}">${escape(r.notes)}</span>`:''}</div>${r.subject||clock||r.notes?`<div class="record-meta short-record-meta">${escape([clock,r.subject,r.notes].filter(Boolean).join(' · '))}</div>`:''}${r.subject||clock?`<div class="record-meta long-record-meta">${escape([clock,r.subject].filter(Boolean).join(' · '))}</div>`:''}${r.notes?`<div class="work-note">${escape(r.notes)}</div>`:''}</button></div>`;
 }
 function openRecord(kind,id=null){
   const config=recordConfig[kind],record=state[kind].find(r=>r.id===id);editingRecord={kind,id:record?.id||null};
   $('record-dialog-title').textContent=(record?'编辑':'新增')+config.label;$('record-title').value=record?.title||'';$('record-subject-label').textContent=config.subject;$('record-subject').value=record?.subject||'';
   $('record-date').value=record?.date||C.key(new Date());$('record-status').innerHTML=Object.entries(config.statuses).map(([value,label])=>`<option value="${value}">${label}</option>`).join('');$('record-status').value=record?.status||'planned';
-  $('record-time-row').hidden=kind!=='development';$('record-start').value=record?.startTime||'';$('record-end').value=record?.endTime||'';$('record-notes-label').textContent=config.notes;$('record-notes').value=record?.notes||'';$('record-feedback').textContent='';
+  $('record-time-row').hidden=kind!=='development';$('record-start').value=record?.startTime||'';$('record-end').value=record?.endTime||'';$('record-notes-label').textContent=config.notes;$('record-notes').placeholder=kind==='business'?'记录接洽进展、反馈或下一步，可回车换行。':'';$('record-notes').value=record?.notes||'';$('record-feedback').textContent='';
   $('archive-record').hidden=!record;$('archive-record').textContent=record?.archived?'恢复记录':'归档记录';$('record-dialog').showModal();$('record-title').focus();
 }
-function recordClick(kind,e){const check=e.target.closest('[data-record-check]'),edit=e.target.closest('[data-record-edit]');if(check){const record=state[kind].find(r=>r.id===check.dataset.recordCheck);if(record){C.toggleRecord(record);save();renderRecords(kind);renderDimensions();renderCalendar();}}}
+function recordClick(kind,e){const check=e.target.closest('[data-record-check]'),edit=e.target.closest('[data-record-edit]');if(check){const record=state[kind].find(r=>r.id===check.dataset.recordCheck);if(record){C.toggleRecord(record);save();renderRecords(kind);renderDimensions();renderCalendar();}}else if(kind==='business'&&edit)openRecord(kind,edit.dataset.recordEdit);}
 const money=cents=>(cents/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const financeMetricKeys=['negotiating','delivery','pending','revenue'];
 const financeIncomeStages={negotiating:'待接洽',delivery:'待交付',pending:'待结算',settled:'已结算（总营收）'};
@@ -176,7 +199,7 @@ function renderThought(){
   const today=C.key(new Date()),entries=Object.entries(state.thoughts).filter(([date,text])=>C.validDate(date)&&typeof text==='string'&&text.trim()).map(([date,text])=>({date,text}));
   if(!entries.some(r=>r.date===today))entries.push({date:today,text:''});
   $('thought-history').textContent='搜索';$('thought-reminder').innerHTML=svg('bell')+(state.reflectionEnabled?state.reflectionTime:'提醒');
-  $('review-records').innerHTML=timeline(entries,r=>r.date===today?`<div class="review-editor"><p class="prompt" id="prompt">${escape(state.prompt)}</p><textarea id="thought" maxlength="20000" aria-label="今日复盘" placeholder="今天的进展、卡点和思考…"></textarea><div class="thought-footer"><span>自动保存 · 按日归档</span><span id="word-count">${Array.from(r.text).length} 字</span></div></div>`:`<button class="review-entry" data-edit-kind="review" data-edit-id="${escape(r.date)}" data-review="${escape(r.date)}" aria-label="编辑 ${escape(r.date)} 的复盘"><span>${escape(r.text)}</span><small>编辑</small></button>`);
+  $('review-records').innerHTML=timeline(entries,r=>r.date===today?`<div class="review-editor"><p class="prompt" id="prompt">${escape(state.prompt)}</p><textarea id="thought" maxlength="20000" aria-label="今日复盘" placeholder="今天的进展、卡点和思考…"></textarea><div class="thought-footer"><span>右下角拖动拉长 · 自动保存</span><span id="word-count">${Array.from(r.text).length} 字</span></div></div>`:`<button class="review-entry" data-edit-kind="review" data-edit-id="${escape(r.date)}" data-review="${escape(r.date)}" aria-label="编辑 ${escape(r.date)} 的复盘"><span>${escape(r.text)}</span><small>编辑</small></button>`);
   $('thought').value=state.thoughts[today]||'';
   $('thought').addEventListener('input',()=>{updateThought(today,$('thought').value);$('word-count').textContent=Array.from($('thought').value).length+' 字';});
   $('thought').addEventListener('blur',()=>{if(dirty)persist();renderCalendar();});
@@ -220,7 +243,7 @@ async function sync(){
   if(!native||!connected||syncing)return;
   syncing=true;syncAgain=false;syncError='';renderCalendar();const target=C.monthKey(view),generation=syncGeneration;
   const now=new Date(),months=new Map([[target,new Date(view)],[C.monthKey(now),new Date(now.getFullYear(),now.getMonth(),1)]]);
-  if(state.eventsEnabled){const next=new Date(now.getFullYear(),now.getMonth()+1,1);months.set(C.monthKey(next),next);}
+  const next=new Date(now.getFullYear(),now.getMonth()+1,1);months.set(C.monthKey(next),next);
   try{
     const updated={};let latestCalendars=[];
     for(const [key,date] of months){
@@ -285,27 +308,26 @@ $('hide').onclick=async()=>{await lockFinancialView();if(native)await call('hide
 $('drag-area').addEventListener('mousedown',e=>{if(native&&!state.locked&&!e.target.closest('button'))call('drag');});
 $('add-task').onsubmit=e=>{e.preventDefault();const title=$('task-input').value.trim();if(!title)return;state.tasks.push({id:crypto.randomUUID(),title,date:C.key(new Date()),done:false,createdAt:Date.now()});$('task-input').value='';save();renderTasks();renderDimensions();renderCalendar();$('tasks').scrollTop=0;};
 function taskClick(e){
-  const check=e.target.closest('[data-check]'),del=e.target.closest('[data-delete]');
+  const check=e.target.closest('[data-check]'),del=e.target.closest('[data-delete]'),edit=e.target.closest('[data-task-edit]');
   if(check){const task=state.tasks.find(t=>t.id===check.dataset.check);if(task)C.toggleTask(task,new Date());}
   if(del)state.tasks=state.tasks.filter(t=>t.id!==del.dataset.delete);
   if(check||del){save();renderTasks();renderDimensions();renderCalendar();}
+  else if(edit)openTask(edit.dataset.taskEdit);
 }
 $('tasks').onclick=taskClick;
 $('add-project').onclick=()=>openProject();$('show-archived').onclick=()=>{showArchived=!showArchived;renderProjects();};
 function projectClick(e){
   const check=e.target.closest('[data-project-check]'),row=e.target.closest('[data-project]');
   if(check){const project=state.projects.find(p=>p.id===check.dataset.projectCheck);if(project){C.toggleProject(project);save();renderProjects();renderDimensions();}}
+  else if(row)openProject(row.dataset.project);
 }
 $('projects').onclick=projectClick;
-$('project-status').onchange=()=>{if($('project-status').value==='done')$('project-progress').value=100;};
-$('project-progress').onchange=()=>{if(Number($('project-progress').value)===100)$('project-status').value='done';else if($('project-status').value==='done')$('project-status').value='active';};
 $('project-form').onsubmit=e=>{
   e.preventDefault();const name=$('project-name').value.trim();if(!name){$('project-name').focus();return;}
   const date=$('project-date').value;if(!C.validDate(date)){$('project-date').focus();return;}
-  const progress=Math.max(0,Math.min(100,Math.round(Number($('project-progress').value)||0))),done=progress===100||$('project-status').value==='done',now=Date.now();
-  const existing=state.projects.find(p=>p.id===editingProject),data={name,date,progress:done?100:progress,nextStep:$('project-next').value.trim(),status:done?'done':$('project-status').value,updatedAt:now,completedAt:done?(existing?.completedAt||now):null};
-  if(done&&existing&&!C.projectDone(existing)){data.resumeStatus=existing.status;data.resumeProgress=existing.progress;}
-  if(existing)Object.assign(existing,data);else{state.projects.push({id:crypto.randomUUID(),archived:false,createdAt:now,...data});showArchived=false;}
+  const existing=state.projects.find(p=>p.id===editingProject),now=Date.now();
+  const data={name,date,nextStep:$('project-next').value.trim(),updatedAt:now};
+  if(existing)Object.assign(existing,data);else{state.projects.push({id:crypto.randomUUID(),archived:false,createdAt:now,status:'active',progress:0,completedAt:null,...data});showArchived=false;}
   save();renderProjects();renderDimensions();if(!existing)$('projects').scrollTop=0;$('project-dialog').close();
 };
 $('archive-project').onclick=()=>{const p=state.projects.find(p=>p.id===editingProject);if(!p)return;p.archived=!p.archived;if(!p.archived)showArchived=false;p.updatedAt=Date.now();save();renderProjects();renderDimensions();$('project-dialog').close();toast(p.archived?'项目已归档，可随时恢复':'项目已恢复');};
@@ -348,7 +370,7 @@ $('task-form').onsubmit=e=>{
   e.preventDefault();const title=$('task-title').value.trim(),date=$('task-date').value;if(!title)return;if(!C.validDate(date)){$('task-feedback').textContent='请选择有效日期。';return;}
   const existing=state.tasks.find(t=>t.id===editingTask),now=Date.now(),data={title,date,notes:$('task-notes').value.trim(),updatedAt:now};if(existing)Object.assign(existing,data);else state.tasks.push({id:crypto.randomUUID(),createdAt:now,done:false,...data});save();renderTasks();renderCalendar();renderDimensions();$('task-dialog').close();
 };
-$('add-all').onclick=()=>{const kind=$('all-kind').value;if(kind==='tasks')openTask();else if(kind==='projects')openProject();else openRecord(kind);};
+$('add-all').onclick=()=>{const kind=$('all-kind').value;if(kind==='tasks')openTask();else if(kind==='projects')openProject();else if(kind==='review')openReview();else if(kind==='memo')openMemo();else openRecord(kind);};
 for(const style of ['short','long'])$('view-'+style).onclick=()=>{state.listStyle=style;renderDimensions();save();};
 function editWritten(kind,id){if(kind==='tasks')openTask(id);else if(kind==='projects')openProject(id);else if(kind==='business'||kind==='development')openRecord(kind,id);else if(kind==='finance')openFinance(id);else if(kind==='review')openReview(id);else if(kind==='memo')openMemo(id);}
 function editRecordEvent(e){
@@ -358,7 +380,7 @@ function editRecordEvent(e){
 for(const id of ['tasks','projects','business-records','development-records','finance-records','review-records','all-records','memo-records']){
   $(id).ondblclick=editRecordEvent;$(id).onkeydown=e=>{if((e.key==='Enter'||e.key==='F2')&&!e.isComposing&&editRecordEvent(e))e.preventDefault();};
 }
-$('all-records').onclick=e=>{const row=e.target.closest('[data-edit-kind]');if(!row)return;const kind=row.dataset.editKind;if(kind==='tasks')taskClick(e);else if(kind==='projects')projectClick(e);else recordClick(kind,e);};
+$('all-records').onclick=e=>{const row=e.target.closest('[data-edit-kind]');if(!row)return;const kind=row.dataset.editKind;if(kind==='tasks')taskClick(e);else if(kind==='projects')projectClick(e);else if(kind==='review'||kind==='memo')editWritten(kind,row.dataset.editId);else recordClick(kind,e);};
 for(const type of ['pointerdown','keydown','input'])document.addEventListener(type,touchFinance);
 $('cli-connect').onclick=async()=>{if(!native){toast('请在 Mac 应用中连接飞书');return;}$('cli-connect').disabled=true;try{const result=await call('cliConnect');$('auth-feedback').textContent=result.ready?'已连接，正在同步…':'请在飞书授权页面确认日历只读权限，完成后自动同步。';}catch(e){$('auth-feedback').textContent=e.message;}finally{$('cli-connect').disabled=false;}};
 async function detectCLI(){

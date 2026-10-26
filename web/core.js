@@ -25,6 +25,23 @@
       .sort((a,b)=>Number(b.allDay)-Number(a.allDay)||a.start-b.start||a.title.localeCompare(b.title));
   }
   function dedupe(events) { return [...new Map(events.map(e=>[e.id,e])).values()]; }
+  function cachedEvents(cache) {
+    const snapshots=Object.entries(cache||{}).filter(([month,s])=>/^\d{4}-(0[1-9]|1[0-2])$/.test(month)&&Array.isArray(s?.events))
+      .map(([month,s])=>({...s,...bounds(fromKey(month+'-01')),syncedAt:Number(s.syncedAt)||0})).sort((a,b)=>a.syncedAt-b.syncedAt);
+    const latest=new Map();
+    for(const snapshot of snapshots)for(const event of snapshot.events){
+      if(event?.id&&Number.isFinite(event.start)&&Number.isFinite(event.end)&&event.end>=event.start)latest.set(event.id,{event,snapshot});
+    }
+    return [...latest.values()].filter(({event,snapshot})=>!snapshots.some(s=>s.syncedAt>snapshot.syncedAt&&event.start<s.end*1000&&(event.end>s.start*1000||(event.end===event.start&&event.start>=s.start*1000)))).map(x=>x.event);
+  }
+  function eventTimeline(events, today=new Date()) {
+    const groups=new Map(),start=fromKey(key(today)).getTime();
+    for(const event of events){
+      if(!(event.end>start||(event.end===event.start&&event.start>=start)))continue;
+      const date=key(new Date(Math.max(event.start,start)));if(!groups.has(date))groups.set(date,[]);groups.get(date).push(event);
+    }
+    return [...groups].sort(([a],[b])=>a.localeCompare(b)).map(([date,items])=>({date,items:items.sort((a,b)=>Number(b.allDay)-Number(a.allDay)||a.start-b.start||a.title.localeCompare(b.title))}));
+  }
   function tasksOnDay(tasks, date) {
     const day=key(date);
     return tasks.filter(t=>t.date===day || (!t.done && t.date<day) || (t.done && t.completedOn===day))
@@ -92,8 +109,14 @@
     return totals;
   }
   function workFeed(state) {
-    return ['tasks','projects','business','development'].flatMap(kind=>(state[kind]||[]).filter(r=>!r.archived).map(r=>({...r,kind,date:recordDate(r),title:kind==='projects'?r.name:r.title})));
+    const work=['tasks','projects','business','development'].flatMap(kind=>(state[kind]||[]).filter(r=>!r.archived).map(r=>({...r,kind,date:recordDate(r),title:kind==='projects'?r.name:r.title})));
+    const reviews=Object.entries(state.thoughts||{}).filter(([date,text])=>validDate(date)&&typeof text==='string'&&text.trim()).map(([date,text])=>({id:date,kind:'review',date,title:'复盘',text}));
+    const memos=(state.memos||[]).filter(r=>!r.archived&&typeof r.text==='string'&&r.text.trim()).map(r=>({...r,kind:'memo',date:recordDate(r),title:'备忘'}));
+    return [...work,...reviews,...memos];
   }
-  const api={pad,key,fromKey,monthKey,bounds,normalize,onDay,dedupe,tasksOnDay,toggleTask,projectDone,toggleProject,untilNextDay,shiftMonth,validDate,recordsOnDay,toggleRecord,recordDate,timelineGroups,amountCents,financeTotals,workFeed};
+  function overviewGroups(records) {
+    return ['tasks','projects','business','development','review','memo'].flatMap(kind=>timelineGroups(records.filter(r=>r.kind===kind)));
+  }
+  const api={pad,key,fromKey,monthKey,bounds,normalize,onDay,dedupe,cachedEvents,eventTimeline,tasksOnDay,toggleTask,projectDone,toggleProject,untilNextDay,shiftMonth,validDate,recordsOnDay,toggleRecord,recordDate,timelineGroups,amountCents,financeTotals,workFeed,overviewGroups};
   if(typeof module!=='undefined')module.exports=api; else root.Core=api;
 })(typeof window!=='undefined'?window:globalThis);

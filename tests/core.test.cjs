@@ -3,6 +3,25 @@ const assert=require('node:assert/strict');
 const C=require('../web/core.js');
 const calendar={calendar_id:'work',summary:'工作',color:0x4f8b6c};
 const timed=(start,end,status='confirmed')=>({event_id:'event-1',summary:'讨论',start_time:{timestamp:String(new Date(start).getTime()/1000)},end_time:{timestamp:String(new Date(end).getTime()/1000)},status});
+test('跨月飞书时间线使用最新快照，修改去重且删除不被旧月份缓存复活',()=>{
+ const event=(id,start,end,title=id)=>({id,title,start:new Date(start).getTime(),end:new Date(end).getTime(),calendarId:'work'});
+ const keep=event('keep','2026-10-10T09:00:00+08:00','2026-10-10T10:00:00+08:00');
+ const cancelled=event('removed','2026-10-31T09:00:00+08:00','2026-11-02T10:00:00+08:00');
+ const old=event('edit','2026-10-31T09:00:00+08:00','2026-11-01T10:00:00+08:00','旧标题'),updated=event('edit','2026-11-05T09:00:00+08:00','2026-11-05T10:00:00+08:00','新标题');
+ const cache={'2026-11':{syncedAt:200,events:[updated]},'2026-10':{syncedAt:100,events:[keep,cancelled,old]},invalid:{events:[cancelled]}};
+ const before=structuredClone(cache),list=C.cachedEvents(cache);
+ assert.deepEqual(list.map(e=>e.id).sort(),['edit','keep']);assert.equal(list.find(e=>e.id==='edit').title,'新标题');assert.deepEqual(cache,before);
+});
+test('飞书时间线从今天按日期递增，同一天全天在先、时间递增，跨日安排只出现一条',()=>{
+ const stamp=s=>new Date(s).getTime(),list=[{id:'afternoon',title:'下午',start:stamp('2026-10-26T15:00:00+08:00'),end:stamp('2026-10-26T16:00:00+08:00')},{id:'morning',title:'上午',start:stamp('2026-10-26T09:00:00+08:00'),end:stamp('2026-10-26T10:00:00+08:00')},{id:'all',title:'跨日全天',allDay:true,start:stamp('2026-10-26T00:00:00+08:00'),end:stamp('2026-10-29T00:00:00+08:00')},{id:'future',title:'下个月',start:stamp('2026-11-01T10:00:00+08:00'),end:stamp('2026-11-01T11:00:00+08:00')}];
+ const groups=C.eventTimeline(list,new Date(2026,9,26));assert.deepEqual(groups.map(g=>g.date),['2026-10-26','2026-11-01']);assert.deepEqual(groups[0].items.map(e=>e.id),['all','morning','afternoon']);assert.equal(groups.flatMap(g=>g.items).length,4);assert.equal(list[0].id,'afternoon');
+});
+test('今天以前结束的日程不展示，跨日进行中的安排归入今天且不修改原始时间',()=>{
+ const stamp=s=>new Date(s).getTime(),event=(id,start,end)=>({id,title:id,start:stamp(start),end:stamp(end)}),today=new Date(2026,9,26,12);
+ const events=[event('yesterday','2026-10-25T09:00:00+08:00','2026-10-25T10:00:00+08:00'),event('ends-at-midnight','2026-10-25T23:00:00+08:00','2026-10-26T00:00:00+08:00'),event('continuing','2026-10-25T00:00:00+08:00','2026-10-27T00:00:00+08:00'),event('today-morning','2026-10-26T09:00:00+08:00','2026-10-26T10:00:00+08:00'),event('zero','2026-10-26T00:00:00+08:00','2026-10-26T00:00:00+08:00')];
+ const before=structuredClone(events),groups=C.eventTimeline(events,today);assert.deepEqual(groups.map(g=>g.date),['2026-10-26']);assert.deepEqual(groups[0].items.map(e=>e.id),['continuing','zero','today-morning']);assert.deepEqual(events,before);
+ assert.deepEqual(C.eventTimeline(events,new Date(2026,9,27)),[]);
+});
 test('全天日程以本地日历日期显示，结束日期不包含在内',()=>{
  const e=C.normalize({event_id:'all-day',start_time:{date:'2026-10-25'},end_time:{date:'2026-10-27'},summary:'跨日安排'},calendar);
  assert.equal(C.onDay([e],new Date(2026,9,24)).length,0);
@@ -91,7 +110,13 @@ test('财务三个待办阶段各自汇总，总营收只计已结算收入，�
 });
 
 
-test('全部时间流只合并四类工作，保留原始标识和日期、排除归档和财务',()=>{
+test('一览保留原始标识和日期，排除归档和财务',()=>{
  const state={tasks:[{id:'same',title:'待办',date:'2026-10-26',done:true}],projects:[{id:'same',name:'项目',date:'2026-10-25'},{id:'archived',name:'旧',archived:true}],business:[{id:'b',title:'商务',date:'2026-10-24'}],development:[],finance:[{id:'private',title:'账目',amountCents:100}]};
  const feed=C.workFeed(state);assert.equal(feed.length,3);assert.deepEqual(C.timelineGroups(feed).map(g=>g.date),['2026-10-26','2026-10-25','2026-10-24']);assert.deepEqual(feed.filter(x=>x.id==='same').map(x=>x.kind),['tasks','projects']);assert.equal(feed[1].title,'项目');assert.equal(state.projects[0].title,undefined);assert.ok(!feed.some(x=>x.id==='private'));
+});
+
+test('一览固定按待办项目商务开发复盘备忘排序，同类日期倒序且不过滤已完成记录',()=>{
+ const state={tasks:[{id:'old',title:'旧待办',date:'2026-10-20'},{id:'new',title:'新待办',date:'2026-10-22',done:true}],projects:[{id:'p',name:'项目',date:'2026-10-30'}],business:[{id:'b',title:'商务',date:'2026-10-29'}],development:[{id:'d',title:'开发',date:'2026-10-28'}],thoughts:{'2026-10-27':'复盘正文','2026-10-26':'  ',invalid:'无效日期'},memos:[{id:'m',date:'2026-10-31',text:'备忘正文'},{id:'archived',text:'不展示',archived:true},{id:'empty',text:'  '}],finance:[{id:'private',title:'保密财务'}]};
+ const snapshot=structuredClone(state),groups=C.overviewGroups(C.workFeed(state)),records=groups.flatMap(g=>g.items);
+ assert.deepEqual(records.map(r=>r.kind),['tasks','tasks','projects','business','development','review','memo']);assert.deepEqual(records.map(r=>r.id),['new','old','p','b','d','2026-10-27','m']);assert.equal(records[0].done,true);assert.equal(records[5].text,'复盘正文');assert.equal(records[6].text,'备忘正文');assert.deepEqual(state,snapshot);
 });

@@ -22,10 +22,12 @@
     <div class="weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
     <div id="calendar" class="calendar" role="group" aria-label="选择日期"></div>
     <div class="sync-line"><button id="connection" class="connection"></button><button id="refresh" class="icon" title="立即同步" aria-label="立即同步"></button></div>
-    <details class="feishu-agenda" id="feishu-agenda"><summary><span id="agenda-title">飞书日程</span><span id="event-count" class="muted"></span></summary><div id="agenda" class="agenda"></div></details>
+    <section class="feishu-agenda" id="feishu-agenda" aria-labelledby="feishu-agenda-toggle"><button id="feishu-agenda-toggle" class="feishu-agenda-toggle" aria-expanded="false" aria-controls="agenda"><span id="agenda-title">飞书日程</span><span id="event-count" class="muted"></span></button><div id="agenda" class="agenda" role="feed" aria-label="飞书日程时间线" tabindex="0" hidden></div></section>
   </section>
-  <div class="selected-date-bar"><span id="selected-date"></span><span id="save-status">保存在这台 Mac</span></div>
-  <div class="view-controls" id="view-controls"><span>双击记录可编辑</span><div role="group" aria-label="列表显示方式"><button id="view-short" class="view-button" aria-pressed="false">短列表</button><button id="view-long" class="view-button" aria-pressed="true">长列表</button></div></div>
+  <section class="time-management" id="time-management" aria-labelledby="time-management-toggle">
+  <div class="time-management-header"><button id="time-management-toggle" class="time-management-toggle" aria-label="时间管理" aria-expanded="true" aria-controls="time-management-content">时间管理</button><span id="save-status" aria-live="polite">保存在这台 Mac</span></div>
+  <div class="time-management-content" id="time-management-content">
+  <div class="view-controls" id="view-controls"><div role="group" aria-label="列表显示方式"><button id="view-short" class="view-button" aria-pressed="false">短列表</button><button id="view-long" class="view-button" aria-pressed="true">长列表</button></div></div>
   <nav id="dimensions" class="dimension-tabs" role="tablist" aria-label="查看维度">
     <button id="tab-all" role="tab" aria-label="工作一览" aria-selected="true" aria-controls="panel-all" tabindex="0" data-dimension="all"><span>一览</span><small id="badge-all"></small></button>
     <button id="tab-tasks" role="tab" aria-label="今日待办" aria-selected="false" aria-controls="panel-tasks" tabindex="-1" data-dimension="tasks"><span>待办</span><small id="badge-tasks"></small></button>
@@ -38,7 +40,7 @@
   </nav>
   <div class="dimension-panels">
   <section class="records-section dimension-panel" id="panel-all" role="tabpanel" aria-labelledby="tab-all">
-    <div class="section-heading"><div class="heading-label"><h2>一览</h2></div><div class="project-tools"><select id="all-kind" aria-label="新增记录类型"><option value="tasks">待办</option><option value="projects">项目</option><option value="business">商务</option><option value="development">开发</option></select><button id="add-all" class="quiet-button">＋ 新增</button></div></div>
+    <div class="section-heading"><div class="heading-label"><h2>一览</h2></div><div class="project-tools"><select id="all-kind" aria-label="新增记录类型"><option value="tasks">待办</option><option value="projects">项目</option><option value="business">商务</option><option value="development">开发</option><option value="review">复盘</option><option value="memo">备忘</option></select><button id="add-all" class="quiet-button">＋ 新增</button></div></div>
     <div id="all-records" class="timeline" role="feed" aria-label="工作一览记录" tabindex="0"></div>
   </section>
   <section class="focus-section dimension-panel" id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks" hidden>
@@ -75,6 +77,8 @@
   </section>
   </div>
   <footer class="bottom-line"><span class="status-dot"></span><span id="window-status">贴在桌面，留在心上。</span><button id="export" class="quiet-button">导出记录</button></footer>
+  </div>
+  </section>
 </main>
 <dialog id="settings-dialog" aria-labelledby="settings-title">
   <div class="dialog-header"><h2 id="settings-title">重新定义价值 · 设置</h2><button class="icon close-dialog" aria-label="关闭设置">×</button></div>
@@ -94,15 +98,15 @@
     <div id="browser-note" class="hint" hidden>这是浏览器预览。桌面固定、飞书授权和系统提醒在 Mac 应用中使用。</div>
   </div>
 </dialog>
-<dialog id="task-dialog" aria-labelledby="task-dialog-title"><div class="dialog-header"><h2 id="task-dialog-title">编辑待办</h2><button class="icon close-dialog" aria-label="关闭待办编辑">×</button></div><form id="task-form" class="dialog-content project-form"><label class="field-label">待办事项<input id="task-title" maxlength="150" required autocomplete="off"></label><label class="field-label">记录日期<input id="task-date" type="date" required></label><label class="field-label">补充内容<textarea id="task-notes" maxlength="3000"></textarea></label><p id="task-feedback" class="feedback" role="status"></p><div class="button-row"><button class="primary-button" type="submit">保存待办</button></div></form></dialog>
+<dialog id="task-dialog" aria-labelledby="task-dialog-title"><div class="dialog-header"><h2 id="task-dialog-title">编辑待办</h2><button class="icon close-dialog" aria-label="关闭待办编辑">×</button></div><form id="task-form" class="dialog-content project-form"><label class="field-label">待办事项<input id="task-title" maxlength="150" required autocomplete="off"></label><label class="field-label">记录日期<input id="task-date" type="date" required></label><label class="field-label">进度备注<textarea id="task-notes" maxlength="3000" placeholder="记录目前进展、补充说明或下一步，可回车换行。"></textarea></label><p id="task-feedback" class="feedback" role="status"></p><div class="button-row"><button class="primary-button" type="submit">保存待办</button></div></form></dialog>
 <dialog id="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
   <div class="dialog-header"><h2 id="project-dialog-title">新建项目</h2><button class="icon close-dialog" aria-label="关闭项目">×</button></div>
   <form id="project-form" class="dialog-content project-form" aria-label="项目编辑">
     <label class="field-label">项目名称<input id="project-name" required maxlength="120" placeholder="例如：官网改版" autocomplete="off" autofocus></label>
-    <label class="field-label">记录日期<input id="project-date" type="date" required></label><div class="project-field-row"><label class="field-label">当前状态<select id="project-status"><option value="active">进行中</option><option value="waiting">待推进</option><option value="blocked">有卡点</option><option value="done">已完成</option></select></label><label class="field-label">完成进度（%）<input id="project-progress" type="number" min="0" max="100" step="1" value="0" required></label></div>
-    <label class="field-label">下一步行动<textarea id="project-next" maxlength="1000" placeholder="写清下一步要做什么，比只记一个百分比更有用。"></textarea></label>
+    <label class="field-label">记录日期<input id="project-date" type="date" required></label>
+    <label class="field-label">进度备注<textarea id="project-next" maxlength="3000" placeholder="记录目前进展、卡点或下一步，可回车换行。"></textarea></label>
     <div class="button-row"><button type="submit" class="primary-button">保存项目</button><button type="button" id="archive-project" class="quiet-button" hidden>归档项目</button></div>
-    <p class="hint">按记录日期累计，最新在上。已完成项目保留在列表中，可取消勾选恢复。</p>
+    <p class="hint">备注会显示在一览和项目列表中；完成后勾选左侧方框，可取消勾选恢复。</p>
   </form>
 </dialog>
 <dialog id="record-dialog" role="dialog" aria-modal="true" aria-labelledby="record-dialog-title">
@@ -148,6 +152,6 @@
   <div class="dialog-content history-content"><p class="hint" id="history-count"></p><input id="history-search" class="history-search" type="search" placeholder="搜索日期或内容" aria-label="搜索复盘" autocomplete="off"><div id="history-list" class="history-list"></div><button id="open-archive" class="quiet-button">打开本机归档文件夹 ↗</button><p class="hint">输入后自动保存，按日期独立归档。点击一条可回看、继续编辑。</p></div>
 </dialog>
 <dialog id="event-dialog" aria-labelledby="event-title"><div class="dialog-header"><h2 id="event-title"></h2><button class="icon close-dialog" aria-label="关闭日程">×</button></div><div class="dialog-content" id="event-detail"></div></dialog>
-<dialog id="help-dialog" aria-labelledby="help-title"><div class="dialog-header"><h2 id="help-title">连接飞书，只需配置一次</h2><button class="icon close-dialog" aria-label="关闭说明">×</button></div><div class="dialog-content prose"><ol><li>打开飞书开放平台，创建企业自建应用。</li><li>在“权限管理”开通用户身份权限：<code>calendar:calendar:readonly</code> 和 <code>offline_access</code>。</li><li>在“安全设置 → 重定向 URL”加入：<code>http://127.0.0.1:41863/callback</code>。</li><li>发布应用版本，将你自己加入可用范围；权限审批按企业设置完成。</li><li>在本机应用设置中填入 App ID、App Secret，点击“连接飞书”，在浏览器确认授权。</li></ol><p>凭据保存在 macOS 钥匙串，思考和事项保存在本机。飞书授权完成后会替换演示日程。暂不支持飞书中外接的 Google / Exchange 日历，以及仅可看忙闲的日历。</p><p>同步按日历原始时间和颜色显示；界面时间采用这台 Mac 的时区。没有连接并验证前，不视为已完成真实同步。</p><button id="developer-console" class="primary-button">打开飞书开放平台</button></div></dialog>
+<dialog id="help-dialog" aria-labelledby="help-title"><div class="dialog-header"><h2 id="help-title">连接飞书，只需配置一次</h2><button class="icon close-dialog" aria-label="关闭说明">×</button></div><div class="dialog-content prose"><ol><li>打开飞书开放平台，创建企业自建应用。</li><li>在“权限管理”开通用户身份权限：<code>calendar:calendar:readonly</code> 和 <code>offline_access</code>。</li><li>在“安全设置 → 重定向 URL”加入：<code>http://127.0.0.1:41863/callback</code>。</li><li>发布应用版本，将你自己加入可用范围；权限审批按企业设置完成。</li><li>在本机应用设置中填入 App ID、App Secret，点击“连接飞书”，在浏览器确认授权。</li></ol><p>凭据保存在 macOS 钥匙串，思考和事项保存在本机。飞书授权完成后会替换演示日程。暂不支持飞书中外接的 Google / Exchange 日历，以及仅可看忙闲的日历。</p><p>同步保留日历原始时间，界面按这台 Mac 的时区显示；飞书安排统一蓝色，本机添加的安排统一红色。</p><button id="developer-console" class="primary-button">打开飞书开放平台</button></div></dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 </body></html>
