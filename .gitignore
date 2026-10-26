@@ -1,0 +1,34 @@
+# Build outputs and local tools
+dist/
+.build/
+*.app/
+*.dSYM/
+*.zip
+zaichang
+integration-tests
+mock-tests
+finance-vault-tests
+node_modules/
+
+# Local/private state and credentials
+.env
+.env.*
+!.env.example
+state.json
+calendar-cache.json
+finance-vault.json
+reflections/
+*credentials*.json
+*token*.json
+*.key
+*.pem
+*.p12
+*.mobileprovision
+
+# OS and editor files
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp
+*.log
