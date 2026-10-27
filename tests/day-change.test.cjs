@@ -46,11 +46,37 @@ test('日历选择不改变六个累计列表、今日复盘或滚动位置',()=
  const app=appAt('2026-10-26T12:00:00+08:00');
  app.run("state.tasks=[{id:'old',date:'2026-10-20',title:'旧待办',done:false},{id:'new',date:'2026-10-26',title:'新待办',done:true}];state.business=[{id:'biz',date:'2026-10-19',title:'过往商务',status:'planned'}];state.thoughts={'2026-10-20':'历史思考','2026-10-26':'今日思考'};render()");
  const tasks=app.element('tasks').innerHTML,business=app.element('business-records').innerHTML,review=app.element('review-records').innerHTML;
- assert.ok(tasks.indexOf('新待办')<tasks.indexOf('旧待办'));assert.match(tasks,/2026-10-20/);assert.match(business,/过往商务/);assert.match(review,/历史思考/);
+ assert.ok(tasks.indexOf('新待办')<tasks.indexOf('旧待办'));assert.match(tasks,/data-timeline-date="2026-10-26"/);assert.equal(app.json('state.tasks')[0].date,'2026-10-20');assert.match(business,/过往商务/);assert.match(review,/历史思考/);
  app.element('business-records').scrollTop=85;app.run("select(C.fromKey('2025-01-01'))");
  assert.equal(app.element('tasks').innerHTML,tasks);assert.equal(app.element('business-records').innerHTML,business);assert.equal(app.element('business-records').scrollTop,85);assert.equal(app.element('thought').value,'今日思考');assert.equal(app.element('review-records').innerHTML,review);
  app.run("openRecord('business')");assert.equal(app.element('record-date').value,'2026-10-26');app.run('openProject()');assert.equal(app.element('project-date').value,'2026-10-26');app.run('openFinance()');assert.equal(app.element('finance-date').value,'2026-10-26');
  app.element('task-input').value='不受月历影响的新待办';app.element('add-task').onsubmit({preventDefault(){}});assert.equal(app.json('state.tasks').at(-1).date,'2026-10-26');
+});
+
+test('待办时间可新增修改清空，重开与导出保留时间且兼容旧备注',async()=>{
+ const app=appAt('2026-10-26T12:00:00+08:00');
+ app.run("state.tasks=[{id:'old',title:'旧待办',date:'2026-10-20',notes:'旧备注保留在数据中',done:true,completedOn:'2026-10-21'}];openTask('old')");
+ assert.equal(app.element('task-time').value,'');app.element('task-time').value='09:30';app.element('task-form').onsubmit({preventDefault(){}});
+ const old=app.json('state.tasks')[0];assert.equal(old.time,'09:30');assert.equal(old.notes,'旧备注保留在数据中');assert.equal(old.done,true);assert.equal(old.completedOn,'2026-10-21');
+ for(const id of ['tasks','all-records']){assert.match(app.element(id).innerHTML,/待办时间 09:30/);assert.doesNotMatch(app.element(id).innerHTML,/旧备注保留在数据中/);}
+ app.element('task-input').value='有时间的新待办';app.element('task-input-time').value='18:45';app.element('add-task').onsubmit({preventDefault(){}});assert.equal(app.element('task-input-time').value,'');assert.equal(app.json('state.tasks')[1].time,'18:45');
+ app.element('task-input').value='不填时间也能保存';app.element('add-task').onsubmit({preventDefault(){}});assert.equal(app.json('state.tasks')[2].time,'');
+ app.run('persist()');await app.run('init()');app.run("openTask('old')");assert.equal(app.element('task-time').value,'09:30');
+ app.element('task-time').value='10:15';app.element('task-form').onsubmit({preventDefault(){}});assert.match(app.element('all-records').innerHTML,/待办时间 10:15/);
+ app.run("openTask('old')");app.element('task-time').value='';app.element('task-form').onsubmit({preventDefault(){}});assert.doesNotMatch(app.element('all-records').innerHTML,/待办时间 10:15/);assert.equal(app.json('state.tasks')[0].time,'');
+ await app.element('export').onclick();const exported=JSON.parse(await app.downloads[0].text());assert.equal(exported.tasks[0].notes,'旧备注保留在数据中');assert.equal(exported.tasks[1].time,'18:45');
+});
+
+test('待办与一览使用今天起的同一顺序，编辑时间重排，换日顺延未完成并保留历史',()=>{
+ const app=appAt('2026-12-31T23:59:00+08:00');
+ app.run("state.tasks=[{id:'future',title:'明天任务',date:'2027-01-01',time:'08:00'},{id:'late',title:'晚间任务',date:'2026-12-31',time:'18:00'},{id:'early',title:'上午任务',date:'2026-12-31',time:'09:00'},{id:'carry',title:'过往未完成',date:'2026-12-20',time:'08:30'},{id:'done',title:'历史已完成',date:'2026-12-21',done:true}];render()");
+ const order=()=>{for(const id of ['tasks','all-records']){let last=-1;for(const title of ['过往未完成','上午任务','晚间任务','明天任务','历史已完成']){const i=app.element(id).innerHTML.indexOf(title);assert.ok(i>last,id+': '+title);last=i;}assert.match(app.element(id).innerHTML,new RegExp('<details class="task-history"><summary>'+(id==='tasks'?'过往已完成':'过往记录')+' · 1项'));}};
+ order();app.run("select(C.fromKey('2020-01-01'))");order();
+ app.run("openTask('late')");app.element('task-time').value='08:00';app.element('task-form').onsubmit({preventDefault(){}});
+ for(const id of ['tasks','all-records'])assert.ok(app.element(id).innerHTML.indexOf('晚间任务')<app.element(id).innerHTML.indexOf('过往未完成'));
+ app.run("C.toggleTask(state.tasks.find(t=>t.id==='early'),new Date());render()");app.advance('2027-01-01T00:00:00+08:00');app.run('refreshDay()');
+ for(const id of ['tasks','all-records']){const html=app.element(id).innerHTML;assert.match(html,/data-timeline-date="2027-01-01"/);assert.ok(html.indexOf('晚间任务')<html.indexOf('过往未完成'));assert.match(html,new RegExp('<summary>'+(id==='tasks'?'过往已完成':'过往记录')+' · 2项'));}
+ assert.equal(app.json('state.tasks').find(t=>t.id==='carry').date,'2026-12-20');app.run("openTask('carry')");assert.equal(app.element('task-date').value,'2026-12-20');
 });
 
 test('项目进度备注替代固定状态与百分比，编辑旧项目保留完成恢复信息',()=>{
@@ -135,21 +161,31 @@ test('双击所有本机记录均打开对应编辑器，任务可改内容和�
  for(const [kind,id,container,dialog] of [['tasks','t','tasks','task-dialog'],['projects','p','projects','project-dialog'],['business','b','business-records','record-dialog'],['development','d','development-records','record-dialog'],['finance','f','finance-records','finance-dialog'],['review','2026-10-20','review-records','review-dialog']]){
   const row={dataset:{editKind:kind,editId:id}},target={closest:s=>s==='[data-edit-kind]'?row:null};app.element(container).ondblclick({target});assert.equal(app.element(dialog).open,true,kind);app.element(dialog).close();
  }
- app.run("openTask('t')");app.element('task-title').value='改后的待办';app.element('task-date').value='2026-10-22';app.element('task-notes').value='完整说明\n第二行';app.element('task-form').onsubmit({preventDefault(){}});assert.equal(app.json('state.tasks')[0].done,true);assert.equal(app.json('state.tasks')[0].title,'改后的待办');assert.equal(app.json('state.tasks')[0].date,'2026-10-22');assert.equal(app.json('state.tasks')[0].completedOn,'2026-10-21');assert.match(app.element('all-records').innerHTML,/改后的待办/);
+ app.run("openTask('t')");app.element('task-title').value='改后的待办';app.element('task-date').value='2026-10-22';app.element('task-time').value='09:30';app.element('task-form').onsubmit({preventDefault(){}});assert.equal(app.json('state.tasks')[0].done,true);assert.equal(app.json('state.tasks')[0].title,'改后的待办');assert.equal(app.json('state.tasks')[0].date,'2026-10-22');assert.equal(app.json('state.tasks')[0].completedOn,'2026-10-21');assert.match(app.element('all-records').innerHTML,/改后的待办/);
 });
 test('长短样式持久化，一览视图按日期合并四类记录且不包含财务复盘',()=>{
  const app=appAt('2026-10-26T12:00:00+08:00');app.run("state.tasks=[{id:'a',date:'2026-10-26',title:'统一待办'}];state.projects=[{id:'b',date:'2026-10-25',name:'统一项目',status:'active'}];state.business=[{id:'c',date:'2026-10-24',title:'统一商务',status:'waiting'}];state.development=[{id:'d',date:'2026-10-23',title:'统一开发',status:'working'}];state.finance=[{id:'f',date:'2026-10-26',title:'保密账目',amountCents:500,type:'income'}];switchDimension('all')");
  const html=app.element('all-records').innerHTML;for(const t of ['统一待办','统一项目','统一商务','统一开发'])assert.match(html,new RegExp(t));assert.ok(html.indexOf('统一待办')<html.indexOf('统一项目'));assert.doesNotMatch(html,/保密账目/);assert.equal(app.element('panel-all').hidden,false);
  app.element('view-long').onclick();app.run('persist()');assert.equal(JSON.parse(app.storage.get('zaichang-preview')).listStyle,'long');app.run("select(C.fromKey('2020-01-01'))");assert.equal(app.element('all-records').innerHTML,html);app.element('view-short').onclick();assert.equal(app.run('state.listStyle'),'short');
 });
-test('一览按六类顺序展示，单击复盘备忘编辑原记录，更新后仍保持顺序',()=>{
+test('一览混合六类记录按日期展示，单击复盘备忘编辑原记录并保留历史',()=>{
  const app=appAt('2026-10-26T12:00:00+08:00');
  app.run("state.tasks=[{id:'t',date:'2026-10-20',title:'排在最前的待办'}];state.projects=[{id:'p',date:'2026-10-26',name:'第二类项目'}];state.business=[{id:'b',date:'2026-10-25',title:'第三类商务'}];state.development=[{id:'d',date:'2026-10-24',title:'第四类开发'}];state.thoughts={'2026-10-23':'第五类复盘内容'};state.memos=[{id:'m',date:'2026-10-26',text:'第六类备忘内容'}];renderDimensions()");
- const kinds=['tasks','projects','business','development','review','memo'];let html=app.element('all-records').innerHTML;let previous=-1;for(const kind of kinds){const index=html.indexOf('data-edit-kind="'+kind+'"');assert.ok(index>previous,kind);previous=index;}assert.equal(app.element('badge-all').textContent,6);
+ const kinds=['tasks','projects','business','development','memo','review'];let html=app.element('all-records').innerHTML;let previous=-1;for(const kind of kinds){const index=html.indexOf('data-edit-kind="'+kind+'"');assert.ok(index>previous,kind);previous=index;}assert.equal(app.element('badge-all').textContent,6);
  const click=(kind,id)=>{const row={dataset:{editKind:kind,editId:id}},target={closest:selector=>selector==='[data-edit-kind]'?row:null};app.element('all-records').onclick({target});};
  click('review','2026-10-23');assert.equal(app.element('review-dialog').open,true);assert.equal(app.element('review-edit').value,'第五类复盘内容');app.element('review-edit').value='修改复盘 <纯文本>';app.element('review-edit').listeners.input();app.element('review-dialog').close();
- click('memo','m');assert.equal(app.element('memo-dialog').open,true);app.element('memo-text').value='修改备忘\n第二行';app.element('memo-text').listeners.input();app.run('persist()');assert.equal(app.json('state.memos').length,1);assert.equal(app.json('state.memos')[0].id,'m');html=app.element('all-records').innerHTML;assert.match(html,/修改复盘 &lt;纯文本&gt;/);assert.match(html,/修改备忘\n第二行/);assert.ok(html.indexOf('data-edit-kind="review"')<html.indexOf('data-edit-kind="memo"'));assert.equal(JSON.parse(app.storage.get('zaichang-preview')).thoughts['2026-10-23'],'修改复盘 <纯文本>');
+ click('memo','m');assert.equal(app.element('memo-dialog').open,true);app.element('memo-text').value='修改备忘\n第二行';app.element('memo-text').listeners.input();app.run('persist()');assert.equal(app.json('state.memos').length,1);assert.equal(app.json('state.memos')[0].id,'m');html=app.element('all-records').innerHTML;assert.match(html,/修改复盘 &lt;纯文本&gt;/);assert.match(html,/修改备忘\n第二行/);assert.ok(html.indexOf('data-edit-kind="memo"')<html.indexOf('data-edit-kind="review"'));assert.equal(JSON.parse(app.storage.get('zaichang-preview')).thoughts['2026-10-23'],'修改复盘 <纯文本>');
  app.element('all-kind').value='review';app.element('add-all').onclick();assert.equal(app.element('review-date').value,'2026-10-26');app.element('all-kind').value='memo';app.element('add-all').onclick();assert.equal(app.element('memo-dialog').open,true);
+});
+
+test('一览把不同类型按日期时间混排，修改时间立即重排，重开仍保持顺序',async()=>{
+ const app=appAt('2026-10-26T12:00:00+08:00');
+ app.run("state.tasks=[{id:'t',title:'十点待办',date:'2026-10-26',time:'10:00'}];state.projects=[{id:'p',name:'后天项目',date:'2026-10-28'}];state.business=[{id:'b',title:'明天商务',date:'2026-10-27',status:'waiting'}];state.development=[{id:'d',title:'九点开发',date:'2026-10-26',startTime:'09:00',endTime:'12:00',status:'planned'}];state.thoughts={'2026-10-25':'过往复盘'};state.memos=[{id:'m',date:'2026-10-26',text:'今日备忘'}];render()");
+ const ordered=titles=>{let previous=-1;for(const title of titles){const index=app.element('all-records').innerHTML.indexOf(title);assert.ok(index>previous,title);previous=index;}};
+ ordered(['九点开发','十点待办','今日备忘','明天商务','后天项目','过往复盘']);assert.match(app.element('all-records').innerHTML,/<summary>过往记录 · 1项/);
+ const before=app.element('all-records').innerHTML;app.run("select(C.fromKey('2020-01-01'))");assert.equal(app.element('all-records').innerHTML,before);
+ app.run("openRecord('development','d')");app.element('record-start').value='11:00';app.element('record-form').onsubmit({preventDefault(){}});ordered(['十点待办','九点开发','今日备忘','明天商务','后天项目','过往复盘']);
+ app.run('persist()');await app.run('init()');ordered(['十点待办','九点开发','今日备忘','明天商务','后天项目','过往复盘']);assert.equal(app.json('state.development')[0].startTime,'11:00');
 });
 
 test('新安装与已有记录每次打开均默认一览长列表，仍可临时切换且不改动记录',async()=>{

@@ -93,6 +93,17 @@
     }
     return [...groups].sort(([a],[b])=>b.localeCompare(a)).map(([date,items])=>({date,items:items.sort((a,b)=>(b.record.updatedAt||b.record.createdAt||0)-(a.record.updatedAt||a.record.createdAt||0)||b.index-a.index).map(x=>x.record)}));
   }
+  function taskTimeline(tasks,today=new Date()) {
+    const day=key(today),groups=new Map(),clock=t=>typeof t.time==='string'&&/^([01]\d|2[0-3]):[0-5]\d$/.test(t.time)?t.time:'99:99';
+    for(const [index,record] of tasks.entries()){
+      const original=recordDate(record),date=record.done?(validDate(record.completedOn)?record.completedOn:original):(!original||original<day?day:original);
+      const history=Boolean(record.done&&(!date||date<day)),groupKey=(history?'history:':'')+date;
+      if(!groups.has(groupKey))groups.set(groupKey,{date,history,items:[]});
+      groups.get(groupKey).items.push({record,index});
+    }
+    return [...groups.values()].sort((a,b)=>Number(a.history)-Number(b.history)||(a.history?b.date.localeCompare(a.date):a.date.localeCompare(b.date)))
+      .map(g=>({...g,items:g.items.sort((a,b)=>clock(a.record).localeCompare(clock(b.record))||(b.record.updatedAt||b.record.createdAt||0)-(a.record.updatedAt||a.record.createdAt||0)||b.index-a.index).map(x=>x.record)}));
+  }
   function amountCents(value) {
     const text=String(value).trim();
     if(!/^\d{1,10}(\.\d{1,2})?$/.test(text))return null;
@@ -114,9 +125,23 @@
     const memos=(state.memos||[]).filter(r=>!r.archived&&typeof r.text==='string'&&r.text.trim()).map(r=>({...r,kind:'memo',date:recordDate(r),title:'备忘'}));
     return [...work,...reviews,...memos];
   }
-  function overviewGroups(records) {
-    return ['tasks','projects','business','development','review','memo'].flatMap(kind=>timelineGroups(records.filter(r=>r.kind===kind)));
+  function overviewGroups(records,today=new Date()) {
+    const kinds=['tasks','projects','business','development','review','memo'],day=key(today),groups=new Map();
+    const clock=r=>{const value=r.kind==='tasks'?r.time:r.startTime;return typeof value==='string'&&/^([01]\d|2[0-3]):[0-5]\d$/.test(value)?value:'99:99';};
+    for(const [index,record] of records.entries()){
+      if(!kinds.includes(record.kind))continue;
+      const active=record.kind==='tasks'?!record.done:record.kind==='projects'?!projectDone(record):['business','development'].includes(record.kind)&&record.status!=='done';
+      let date=recordDate(record);
+      if(record.kind==='tasks'&&record.done&&validDate(record.completedOn))date=record.completedOn;
+      else if(['projects','business','development'].includes(record.kind)&&!active&&Number.isFinite(record.completedAt)&&record.completedAt>0)date=key(new Date(record.completedAt));
+      if(active&&(!date||date<day))date=day;
+      const history=!date||date<day,groupKey=(history?'history:':'')+date;
+      if(!groups.has(groupKey))groups.set(groupKey,{date,history,items:[]});
+      groups.get(groupKey).items.push({record,index});
+    }
+    return [...groups.values()].sort((a,b)=>Number(a.history)-Number(b.history)||(a.history?b.date.localeCompare(a.date):a.date.localeCompare(b.date)))
+      .map(g=>({...g,items:g.items.sort((a,b)=>clock(a.record).localeCompare(clock(b.record))||kinds.indexOf(a.record.kind)-kinds.indexOf(b.record.kind)||(b.record.updatedAt||b.record.createdAt||0)-(a.record.updatedAt||a.record.createdAt||0)||b.index-a.index).map(x=>x.record)}));
   }
-  const api={pad,key,fromKey,monthKey,bounds,normalize,onDay,dedupe,cachedEvents,eventTimeline,tasksOnDay,toggleTask,projectDone,toggleProject,untilNextDay,shiftMonth,validDate,recordsOnDay,toggleRecord,recordDate,timelineGroups,amountCents,financeTotals,workFeed,overviewGroups};
+  const api={pad,key,fromKey,monthKey,bounds,normalize,onDay,dedupe,cachedEvents,eventTimeline,tasksOnDay,toggleTask,projectDone,toggleProject,untilNextDay,shiftMonth,validDate,recordsOnDay,toggleRecord,recordDate,timelineGroups,taskTimeline,amountCents,financeTotals,workFeed,overviewGroups};
   if(typeof module!=='undefined')module.exports=api; else root.Core=api;
 })(typeof window!=='undefined'?window:globalThis);

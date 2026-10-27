@@ -1,5 +1,7 @@
 # 重新定义价值 · Redefine Value
 
+<img src="assets/AppIcon.png" width="80" alt="重新定义价值紫黑科技风 App 图标">
+
 一个常驻 macOS 桌面的紫黑色工作台：整月飞书日历、待办、项目、商务、开发、每日复盘、加密财务和备忘。
 
 [![CI](https://github.com/haoyun8665/redefine-value/actions/workflows/ci.yml/badge.svg)](https://github.com/haoyun8665/redefine-value/actions/workflows/ci.yml)
@@ -7,20 +9,21 @@
 
 默认打开 **一览 · 长列表**。把每天写下的内容积累起来，让重要的事一直看得见。
 
-<img src="docs/images/feishu-timeline.jpg" width="340" alt="飞书日程时间线预览，所有日程均为演示数据">
+<img src="docs/images/overview.jpg" width="340" alt="一览按日期时间统一排列，所有记录均为演示数据">
 
-当前版本 **0.10.4**：[下载 macOS Universal 安装包](https://github.com/haoyun8665/redefine-value/releases/download/v0.10.4/redefine-value-0.10.4-macos-universal.zip)，支持 Apple Silicon 和 Intel。升级可替换应用，原有本机记录继续保留。
+当前版本 **0.10.9**：[下载 Mac 安装包（DMG）](https://github.com/haoyun8665/redefine-value/releases/download/v0.10.9/redefine-value-0.10.9-macos-universal.dmg) · [ZIP 压缩包](https://github.com/haoyun8665/redefine-value/releases/download/v0.10.9/redefine-value-0.10.9-macos-universal.zip)，支持 Apple Silicon 和 Intel。升级可替换应用，原有本机记录继续保留。
 
 ## 能做什么
 
-- 桌面常驻小窗，支持拖动、锁定位置、普通浮窗和始终置顶。
+- 紫黑科技风 App 图标；启动默认位于屏幕右上角，支持拖动、锁定位置、普通浮窗和始终置顶。
 - 整月日历，可前后翻月、点选日期，自动同步飞书新增、修改、取消和删除的日程。
 - **一览 / 待办 / 项目 / 商务 / 开发 / 复盘 / 财务 / 备忘** 八个分页。
-- 一览依次汇总待办、项目、商务、开发、复盘和备忘，支持长短列表切换。
+- 一览把待办、项目、商务、开发、复盘和备忘按日期统一混排：今天 → 明天 → 后续日期，同日按填写时间排序，保留类型小标签和长短列表切换。
 - 飞书日程从今天开始由近到远排列，支持独立上下滚动；时间管理收起后，日程延伸到面板底部。
 - 月历上的飞书安排统一蓝色，本机添加的安排统一红色；自动同步当前月和下个月。
-- 本机记录按日期累计，最新在上；切换月历不会把历史内容藏起来。
-- 待办、项目和商务可单击名称或备注编辑；其他记录支持双击编辑。列表名称与右侧备注同一行显示。
+- 过往未完成工作继续显示在今天；一览末尾可展开过往记录，其他分页仍按日期累计保存。切换月历不改变工作列表。
+- 待办可填写时间，名称右侧小字显示时间；项目和商务右侧显示备注。单击名称、时间或备注即可编辑，其他记录支持双击编辑。
+- 待办从今天开始按日期、时间顺序排列；过往未完成事项继续显示在今天，过往已完成记录可在末尾展开查看。
 - 备忘和复盘支持回车换行和自动保存，复盘输入框可自由拉高。
 - 每日复盘按日保存，并生成独立 Markdown 归档；可搜索、补写历史。
 - 财务需密码解锁，支持待接洽、待交付、待结算、总营收四项汇总。

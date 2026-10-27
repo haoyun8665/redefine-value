@@ -115,8 +115,23 @@ test('一览保留原始标识和日期，排除归档和财务',()=>{
  const feed=C.workFeed(state);assert.equal(feed.length,3);assert.deepEqual(C.timelineGroups(feed).map(g=>g.date),['2026-10-26','2026-10-25','2026-10-24']);assert.deepEqual(feed.filter(x=>x.id==='same').map(x=>x.kind),['tasks','projects']);assert.equal(feed[1].title,'项目');assert.equal(state.projects[0].title,undefined);assert.ok(!feed.some(x=>x.id==='private'));
 });
 
-test('一览固定按待办项目商务开发复盘备忘排序，同类日期倒序且不过滤已完成记录',()=>{
+test('一览跨类型按日期从今天向后，过往记录统一置后且不修改原数据',()=>{
  const state={tasks:[{id:'old',title:'旧待办',date:'2026-10-20'},{id:'new',title:'新待办',date:'2026-10-22',done:true}],projects:[{id:'p',name:'项目',date:'2026-10-30'}],business:[{id:'b',title:'商务',date:'2026-10-29'}],development:[{id:'d',title:'开发',date:'2026-10-28'}],thoughts:{'2026-10-27':'复盘正文','2026-10-26':'  ',invalid:'无效日期'},memos:[{id:'m',date:'2026-10-31',text:'备忘正文'},{id:'archived',text:'不展示',archived:true},{id:'empty',text:'  '}],finance:[{id:'private',title:'保密财务'}]};
- const snapshot=structuredClone(state),groups=C.overviewGroups(C.workFeed(state)),records=groups.flatMap(g=>g.items);
- assert.deepEqual(records.map(r=>r.kind),['tasks','tasks','projects','business','development','review','memo']);assert.deepEqual(records.map(r=>r.id),['new','old','p','b','d','2026-10-27','m']);assert.equal(records[0].done,true);assert.equal(records[5].text,'复盘正文');assert.equal(records[6].text,'备忘正文');assert.deepEqual(state,snapshot);
+ const snapshot=structuredClone(state),groups=C.overviewGroups(C.workFeed(state),new Date(2026,9,26)),records=groups.flatMap(g=>g.items);
+ assert.deepEqual(records.map(r=>r.kind),['tasks','review','development','business','projects','memo','tasks']);assert.deepEqual(records.map(r=>r.id),['old','2026-10-27','d','b','p','m','new']);assert.equal(records[6].done,true);assert.deepEqual(groups.map(g=>g.date),['2026-10-26','2026-10-27','2026-10-28','2026-10-29','2026-10-30','2026-10-31','2026-10-22']);assert.equal(groups.at(-1).history,true);assert.equal(records[1].text,'复盘正文');assert.equal(records[5].text,'备忘正文');assert.deepEqual(state,snapshot);
+});
+
+test('一览合并同日各类记录按实际时间排序，旧未完成工作顺延，完成历史和复盘保留',()=>{
+ const state={tasks:[{id:'task',date:'2026-12-31',time:'10:00',done:false},{id:'carry',date:'2026-12-20',time:'08:00'}],projects:[{id:'project',name:'无时间项目',date:'2026-12-21'},{id:'done',date:'2026-12-20',status:'done',completedAt:new Date(2026,11,30,15).getTime()}],business:[{id:'business',date:'2026-12-22',status:'waiting'}],development:[{id:'early',date:'2026-12-31',startTime:'09:00'},{id:'same-time',date:'2026-12-31',startTime:'10:00'},{id:'future',date:'2027-01-01',startTime:'07:00'}],thoughts:{'2026-12-31':'今日复盘','2026-12-29':'历史复盘'},memos:[{id:'memo',date:'2026-12-31',text:'今日备忘'}]};
+ const before=structuredClone(state),groups=C.overviewGroups(C.workFeed(state),new Date(2026,11,31));
+ assert.deepEqual(groups[0].items.map(r=>r.id),['carry','early','task','same-time','project','business','2026-12-31','memo']);assert.equal(groups[1].date,'2027-01-01');assert.deepEqual(groups.filter(g=>g.history).map(g=>g.date),['2026-12-30','2026-12-29']);assert.deepEqual(state,before);
+});
+
+test('待办从今天起跨年正序，同日按时间排序，旧未完成顺延但不改原始日期',()=>{
+ const tasks=[{id:'future',date:'2027-01-02',time:'08:00'},{id:'late',date:'2026-12-31',time:'18:00',updatedAt:99},{id:'early',date:'2026-12-31',time:'09:00',updatedAt:1},{id:'carry',date:'2026-12-20',time:'08:30',done:false},{id:'no-time',date:'2026-12-31'},{id:'legacy'},{id:'tomorrow',date:'2027-01-01'},{id:'past-done',date:'2026-12-19',done:true},{id:'done-today',date:'2026-12-18',completedOn:'2026-12-31',time:'10:00',done:true},{id:'unknown-done',done:true}];
+ const before=structuredClone(tasks),groups=C.taskTimeline(tasks,new Date(2026,11,31));
+ assert.deepEqual(groups.filter(g=>!g.history).map(g=>g.date),['2026-12-31','2027-01-01','2027-01-02']);
+ assert.deepEqual(groups[0].items.map(t=>t.id),['carry','early','done-today','late','legacy','no-time']);
+ assert.deepEqual(groups.filter(g=>g.history).map(g=>g.items[0].id),['past-done','unknown-done']);assert.deepEqual(tasks,before);
+ const next=C.taskTimeline(tasks,new Date(2027,0,1));assert.equal(next[0].date,'2027-01-01');assert.ok(next[0].items.some(t=>t.id==='carry'));assert.ok(next.find(g=>g.history).items.some(t=>t.id==='done-today'));assert.deepEqual(tasks,before);
 });

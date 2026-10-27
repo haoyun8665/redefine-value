@@ -221,6 +221,7 @@ final class DragHandle:NSView {
     }
     func applicationDidFinishLaunching(_ notification:Notification){
         NSApp.setActivationPolicy(.accessory);state=read("state.json");cache=read("calendar-cache.json")
+        if let iconURL=Bundle.main.url(forResource:"AppIcon",withExtension:"icns"),let icon=NSImage(contentsOf:iconURL){NSApp.applicationIconImage=icon}
         do{try financeVault.prepare(legacy:state["finance"] as? [[String:Any]] ?? []);var clean=state;clean.removeValue(forKey:"finance");try write("state.json",clean);state=clean;financeStorageReady=true}catch{financeWarning=error.localizedDescription}
         financeObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification,object:nil,queue:.main){[weak self] _ in Task{@MainActor in self?.lockFinance()}})
         DistributedNotificationCenter.default().addObserver(self,selector:#selector(sleepFinance),name:NSNotification.Name("com.apple.screenIsLocked"),object:nil)
@@ -234,7 +235,8 @@ final class DragHandle:NSView {
         dragHandle=DragHandle(frame:NSRect(x:0,y:768,width:284,height:52));dragHandle.autoresizingMask=[.width,.minYMargin];root.addSubview(dragHandle);window.contentView=root
         for button in [NSWindow.ButtonType.closeButton,.miniaturizeButton,.zoomButton]{window.standardWindowButton(button)?.isHidden=true}
         window.setFrameAutosaveName("ZaichangWindow")
-        if !window.setFrameUsingName("ZaichangWindow"),let screen=NSScreen.main?.visibleFrame {window.setFrameOrigin(NSPoint(x:screen.maxX-440,y:screen.maxY-850))}
+        _ = window.setFrameUsingName("ZaichangWindow")
+        placeWindowAtTopRight()
         window.collectionBehavior=[.canJoinAllSpaces,.stationary,.ignoresCycle,.fullScreenAuxiliary]
         configureWindow(mode:state["mode"] as? String ?? "desktop",locked:state["locked"] as? Bool ?? false)
         status=NSStatusBar.system.statusItem(withLength:NSStatusItem.squareLength)
@@ -245,6 +247,16 @@ final class DragHandle:NSView {
         for (name,selector,key) in [("撤销","undo:","z"),("剪切","cut:","x"),("复制","copy:","c"),("粘贴","paste:","v"),("全选","selectAll:","a")]{edit.addItem(withTitle:name,action:NSSelectorFromString(selector),keyEquivalent:key)};mainMenu.addItem(editItem);NSApp.mainMenu=mainMenu
         guard let root=Bundle.main.resourceURL?.appendingPathComponent("web"),FileManager.default.fileExists(atPath:root.appendingPathComponent("index.html").path) else{NSApp.terminate(nil);return}
         web.loadFileURL(root.appendingPathComponent("index.html"),allowingReadAccessTo:root);window.orderFrontRegardless()
+    }
+    func placeWindowAtTopRight(){
+        guard let screen=window.screen ?? NSScreen.main ?? NSScreen.screens.first else{return}
+        let available=screen.visibleFrame.insetBy(dx:12,dy:12)
+        guard available.width>0,available.height>0 else{return}
+        var frame=window.frame
+        frame.size.width=min(frame.width,available.width)
+        frame.size.height=min(frame.height,available.height)
+        frame.origin=NSPoint(x:available.maxX-frame.width,y:available.maxY-frame.height)
+        window.setFrame(frame,display:true)
     }
     func configureWindow(mode:String,locked:Bool){window.isMovable = !locked;window.isMovableByWindowBackground = !locked;dragHandle?.isHidden=locked
         switch mode{case "top":window.level = .floating;case "normal":window.level = .normal;default:window.level=locked ? NSWindow.Level(rawValue:NSWindow.Level.normal.rawValue-1) : .normal}

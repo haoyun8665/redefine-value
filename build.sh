@@ -24,6 +24,7 @@ for task_arch in "${task_archs[@]}"; do
 done
 lipo -create "${task_executables[@]}" -output "$task_bundle/Contents/MacOS/Redefine"
 cp "$task_root"/web/{index.html,app.js,core.js,style.css} "$task_bundle/Contents/Resources/web/"
+cp "$task_root/assets/AppIcon.icns" "$task_bundle/Contents/Resources/AppIcon.icns"
 cat > "$task_bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -32,9 +33,10 @@ cat > "$task_bundle/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>local.zaichang.desktop</string>
 <key>CFBundleName</key><string>重新定义价值</string>
 <key>CFBundleDisplayName</key><string>重新定义价值</string>
+<key>CFBundleIconFile</key><string>AppIcon.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$task_version</string>
-<key>CFBundleVersion</key><string>32</string>
+<key>CFBundleVersion</key><string>37</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

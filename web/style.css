@@ -406,5 +406,9 @@ body.agenda-fills-space .feishu-agenda .agenda { flex: 1; min-height: 0; max-hei
 .finance-gate p { font-size: 9px; color: #ac95bd; line-height: 1.8; margin: 0; }
 .finance-title-row .heading-label { gap: 6px; }
 #finance-lock-now { font-size: 8px; }
-#task-title, #task-date { min-width: 0; }
+#task-title, #task-date, #task-time { min-width: 0; }
+#task-input-time { flex: 0 0 78px; width: 78px; color: #c6a8df; font-variant-numeric: tabular-nums; color-scheme: dark; }
+#panel-all .task-time, #panel-tasks .task-time { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.task-history { margin: 6px 0; border-top: 1px solid #51336666; }
+.task-history summary { padding: 7px 0; color: #a994bc; font-size: 8px; cursor: pointer; }
 @media(max-width:365px) { .dimension-tabs button { font-size: 8px; } .dimension-tabs button small { font-size: 6px; } .view-controls { padding-left: 13px; padding-right: 13px; } }

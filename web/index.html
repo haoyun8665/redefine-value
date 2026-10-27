@@ -46,7 +46,7 @@
   <section class="focus-section dimension-panel" id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks" hidden>
     <div class="section-heading"><div class="heading-label"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="3"/><path d="m6 10 3 3 5-6"/></svg><h2 id="focus-title">待办</h2></div><span id="task-progress" class="muted"></span></div>
     <div id="tasks" class="timeline" role="feed" aria-label="待办累计记录" tabindex="0"></div>
-    <form id="add-task" class="add-task"><span aria-hidden="true">＋</span><input id="task-input" maxlength="150" placeholder="记下今天的待办…" aria-label="新增待办" autocomplete="off"><button class="add-submit" type="submit">添加</button></form>
+    <form id="add-task" class="add-task"><span aria-hidden="true">＋</span><input id="task-input" maxlength="150" placeholder="记下今天的待办…" aria-label="新增待办" autocomplete="off"><input id="task-input-time" type="time" aria-label="待办时间（选填）" title="待办时间（选填）"><button class="add-submit" type="submit">添加</button></form>
   </section>
   <section class="projects-section dimension-panel" id="panel-projects" role="tabpanel" aria-labelledby="tab-projects" hidden>
     <div class="section-heading"><div class="heading-label"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m3 14 5-5 3 3 6-7m-5 0h5v5M3 18h14"/></svg><h2 id="projects-title">项目管理</h2></div><div class="project-tools"><button id="show-archived" class="quiet-button" hidden></button><button id="add-project" class="quiet-button">＋ 新项目</button></div></div>
@@ -98,7 +98,7 @@
     <div id="browser-note" class="hint" hidden>这是浏览器预览。桌面固定、飞书授权和系统提醒在 Mac 应用中使用。</div>
   </div>
 </dialog>
-<dialog id="task-dialog" aria-labelledby="task-dialog-title"><div class="dialog-header"><h2 id="task-dialog-title">编辑待办</h2><button class="icon close-dialog" aria-label="关闭待办编辑">×</button></div><form id="task-form" class="dialog-content project-form"><label class="field-label">待办事项<input id="task-title" maxlength="150" required autocomplete="off"></label><label class="field-label">记录日期<input id="task-date" type="date" required></label><label class="field-label">进度备注<textarea id="task-notes" maxlength="3000" placeholder="记录目前进展、补充说明或下一步，可回车换行。"></textarea></label><p id="task-feedback" class="feedback" role="status"></p><div class="button-row"><button class="primary-button" type="submit">保存待办</button></div></form></dialog>
+<dialog id="task-dialog" aria-labelledby="task-dialog-title"><div class="dialog-header"><h2 id="task-dialog-title">编辑待办</h2><button class="icon close-dialog" aria-label="关闭待办编辑">×</button></div><form id="task-form" class="dialog-content project-form"><label class="field-label">待办事项<input id="task-title" maxlength="150" required autocomplete="off"></label><div class="project-field-row"><label class="field-label">记录日期<input id="task-date" type="date" required></label><label class="field-label">时间（选填）<input id="task-time" type="time"></label></div><p id="task-feedback" class="feedback" role="status"></p><div class="button-row"><button class="primary-button" type="submit">保存待办</button></div></form></dialog>
 <dialog id="project-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
   <div class="dialog-header"><h2 id="project-dialog-title">新建项目</h2><button class="icon close-dialog" aria-label="关闭项目">×</button></div>
   <form id="project-form" class="dialog-content project-form" aria-label="项目编辑">
