@@ -10,11 +10,15 @@ window.nativeEvent=async(name,data)=>{if(name==='financeLocked'){financeInfo=dat
 const icons={lock:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4"/>',unlock:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 7.6-1.7"/>',settings:'<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="#100b1a"/><circle cx="15" cy="17" r="3" fill="#100b1a"/>',hide:'<path d="M5 12h14"/>',prev:'<path d="m14 6-6 6 6 6"/>',next:'<path d="m10 6 6 6-6 6"/>',refresh:'<path d="M20 8a8 8 0 1 0 0 8M20 3v5h-5"/>',bell:'<path d="M5 17h14l-2-4V9a5 5 0 0 0-10 0v4l-2 4ZM10 21h4"/>'};
 const svg=name=>`<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name]}</svg>`;
 for(const id of ['settings','hide','prev','next','refresh'])$(id).innerHTML=svg(id);
-const defaultState={tasks:[],projects:[],business:[],development:[],finance:[],memos:[],thoughts:{},activeDimension:'all',listStyle:'long',hiddenCalendars:[],mode:'desktop',locked:false,reflectionEnabled:false,reflectionTime:'21:00',prompt:'今天，什么值得记住？',eventsEnabled:false,showDemo:true,calendarExpanded:true,feishuAgendaExpanded:false,timeManagementExpanded:true};
+const defaultState={tasks:[],projects:[],business:[],development:[],finance:[],memos:[],thoughts:{},reviews:[],reviewSubmitted:{},activeDimension:'all',listStyle:'long',hiddenCalendars:[],mode:'desktop',locked:false,reflectionEnabled:false,reflectionTime:'21:00',prompt:'今天，什么值得记住？',eventsEnabled:false,showDemo:true,calendarExpanded:true,feishuAgendaExpanded:false,timeManagementExpanded:true};
 let state=structuredClone(defaultState),selected=new Date(),view=new Date(selected.getFullYear(),selected.getMonth(),1),cache={},calendars=[],connected=false,demo=false,syncing=false,syncAgain=false,syncError='',appId='',source='api',cliInfo={},dirty=false,saveTimer,toastTimer,syncGeneration=0;
 let financeUnlocked=false,financeInfo={configured:false,locked:true,available:true},financeLockPromise=null,financeEpoch=0,financeIdleTimer;
 let editingTask=null,editingProject=null,showArchived=false,editingFinance=null,showFinanceArchived=false,reviewEditDate='';
+let financeStage='all',showFinanceDeleted=false,financeMutationBusy=false;
 let editingMemo=null,showMemoArchived=false;
+let exporting=false;
+let agendaItems=[],agendaDate='';
+let reviewSubmittingId='',editingReviewId=null;
 let currentDay=C.key(new Date()),dayTimer;
 const dimensions=['all','tasks','projects','business','development','review','finance','memo'];
 const recordConfig={business:{label:'商务推进',subject:'客户 / 合作方',notes:'进度备注',statuses:{planned:'待跟进',working:'推进中',waiting:'等反馈',done:'已完成'}},development:{label:'开发日程',subject:'所属项目',notes:'开发内容 / 验收目标',statuses:{planned:'计划中',working:'开发中',blocked:'有卡点',done:'已完成'}}};
@@ -32,41 +36,88 @@ function sampleEvents(){
 function events(){return C.dedupe(demo?sampleEvents():(cache[C.monthKey(view)]?.events||[])).filter(e=>!state.hiddenCalendars.includes(e.calendarId));}
 function persist(){
   clearTimeout(saveTimer);const snapshot=JSON.stringify(state);
-  if(native)return call('saveState',{state}).then(()=>{if(JSON.stringify(state)===snapshot){dirty=false;$('save-status').textContent='已保存在这台 Mac';}}).catch(e=>{$('save-status').textContent='保存失败，请导出备份';toast(e.message);});
-  try{localStorage.setItem('zaichang-preview',snapshot);dirty=false;$('save-status').textContent='已保存在此浏览器';}catch{$('save-status').textContent='无法保存，请导出备份';}
+  if(native)return call('saveState',{state}).then(()=>{if(JSON.stringify(state)===snapshot){dirty=false;$('save-status').textContent='已保存在这台 Mac';}return true;}).catch(e=>{$('save-status').textContent='保存失败，请导出备份';toast(e.message);return false;});
+  try{localStorage.setItem('zaichang-preview',snapshot);dirty=false;$('save-status').textContent='已保存在此浏览器';return true;}catch{$('save-status').textContent='无法保存，请导出备份';return false;}
 }
 function save(){dirty=true;$('save-status').textContent='保存中…';clearTimeout(saveTimer);saveTimer=setTimeout(persist,220);}
-function calendarSourceLine(records,source){
+const calendarValidTime=value=>typeof value==='string'&&/^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+function calendarClock(record,source,day){
+  if(source==='feishu'){
+    if(record.allDay)return '全天';
+    if(!Number.isFinite(record.start))return '';
+    return C.validDate(day)&&C.key(new Date(record.start))<day?'跨天':time(record.start);
+  }
+  if(calendarValidTime(record.time))return record.time;
+  if(calendarValidTime(record.startTime))return record.startTime;
+  return calendarValidTime(record.endTime)?'至'+record.endTime:'';
+}
+function calendarScheduleText(record,source,day){
+  let clock=calendarClock(record,source,day);
+  if(source==='feishu'&&!record.allDay&&Number.isFinite(record.start)&&Number.isFinite(record.end)){
+    const start=new Date(record.start),end=new Date(record.end),crossDay=C.key(start)!==C.key(end);
+    clock=(crossDay?C.key(start)+' ':'')+time(record.start)+'–'+(crossDay?C.key(end)+' ':'')+time(record.end);
+  }else if(source==='local'&&calendarValidTime(record.startTime)&&calendarValidTime(record.endTime)&&record.startTime<record.endTime)clock=record.startTime+'–'+record.endTime;
+  return [clock,record.title].filter(Boolean).join(' ');
+}
+function calendarSourceLine(records,source,day){
   if(!records.length)return '';
-  return `<span class="day-event" data-schedule-source="${source}"><span class="day-event-label">${escape(records[0].title)}</span>${records.length>1?`<small class="day-source-more">+${records.length-1}</small>`:''}</span>`;
+  const items=records.map((record,index)=>({record,index,clock:calendarClock(record,source,day)}));
+  items.sort((a,b)=>(a.clock.match(/\d{2}:\d{2}/)?.[0]||'99:99').localeCompare(b.clock.match(/\d{2}:\d{2}/)?.[0]||'99:99')||a.index-b.index);
+  const first=items[0];
+  return `<span class="day-event" data-schedule-source="${source}">${first.clock?`<span class="day-event-clock">${escape(first.clock)}</span>`:''}<span class="day-event-label">${escape(first.record.title)}</span>${records.length>1?`<small class="day-source-more">+${records.length-1}</small>`:''}</span>`;
 }
 function renderCalendar(){
   $('month').textContent=(view.getMonth()+1)+'月';$('year').textContent=view.getFullYear();
   const offset=(view.getDay()+6)%7,days=new Date(view.getFullYear(),view.getMonth()+1,0).getDate(),count=Math.ceil((offset+days)/7)*7;
-  const all=events();let html='';
+  const all=events(),reviewDays=new Set(C.reviewEntries(state).map(r=>r.date));let html='';
   $('prev').setAttribute('aria-label','上个月');$('next').setAttribute('aria-label','下个月');
   for(let i=0;i<count;i++){
-    const d=new Date(view.getFullYear(),view.getMonth(),i-offset+1),k=C.key(d),ev=C.onDay(all,d),thought=Boolean(state.thoughts[k]?.trim());
+    const d=new Date(view.getFullYear(),view.getMonth(),i-offset+1),k=C.key(d),ev=C.onDay(all,d),thought=reviewDays.has(k);
     const local=[...C.recordsOnDay(state.business,d),...C.recordsOnDay(state.development,d),...state.tasks.filter(t=>t.date===k&&!t.done)],total=ev.length+local.length;
-    html+=`<button class="day ${d.getMonth()!==view.getMonth()?'outside ':''}${k===C.key(new Date())?'today ':''}${k===C.key(selected)?'selected ':''}${thought?'has-thought':''}" data-day="${k}" aria-label="${k}${total?'，'+total+'项安排':''}${thought?'，有复盘':''}" aria-pressed="${k===C.key(selected)}" title="${escape([...ev.map(e=>'飞书：'+e.title),...local.map(e=>'本机：'+e.title)].join(' · '))}"><span class="day-number">${d.getDate()}</span>${calendarSourceLine(ev,'feishu')}${calendarSourceLine(local,'local')}</button>`;
+    const summary=[...ev.map(e=>'飞书：'+calendarScheduleText(e,'feishu',k)),...local.map(e=>'本机：'+calendarScheduleText(e,'local',k))].join(' · ');
+    html+=`<button class="day ${d.getMonth()!==view.getMonth()?'outside ':''}${k===C.key(new Date())?'today ':''}${k===C.key(selected)?'selected ':''}${thought?'has-thought':''}" data-day="${k}" aria-label="${escape(k+(total?'，'+total+'项安排':'')+(thought?'，有复盘':'')+(summary?'，'+summary:''))}" aria-pressed="${k===C.key(selected)}" title="${escape(summary)}"><span class="day-number">${d.getDate()}</span>${calendarSourceLine(ev,'feishu',k)}${calendarSourceLine(local,'local',k)}</button>`;
   }
   $('calendar').innerHTML=html;$('calendar').classList.toggle('six-weeks',count===42);
   const last=cache[C.monthKey(view)]?.syncedAt;
   const info=demo?'演示日程 · 尚未连接飞书':syncing?'正在同步飞书…':syncError?(last?'同步失败 · 显示上次数据':'同步失败 · 点击查看原因'):connected?(last?(source==='cli'?'飞书 CLI':'飞书')+' · '+time(last)+' 同步':'飞书已连接 · 等待同步'):'连接飞书，日程自动出现在这里';
   $('connection').textContent=info;$('connection').className='connection'+(connected?' connected':'')+(syncError?' error':'');$('connection').title=syncError||'点击管理飞书连接';$('refresh').disabled=syncing;
+  renderAgenda();
+}
+function selectedDaySchedules(){
+  const day=C.key(selected),start=C.fromKey(day).getTime();
+  const all=(demo?C.dedupe(sampleEvents()):C.cachedEvents(cache)).filter(e=>!state.hiddenCalendars.includes(e.calendarId));
+  const rows=C.onDay(all,selected).map(record=>({kind:'feishu',source:'feishu',record,order:record.allDay?-Infinity:Math.max(start,record.start)}));
+  for(const kind of ['tasks','business','development'])for(const record of state[kind]){
+    if(record.date!==day||record.archived)continue;
+    const clock=calendarClock(record,'local',day).match(/\d{2}:\d{2}/)?.[0];
+    const order=clock?new Date(selected.getFullYear(),selected.getMonth(),selected.getDate(),Number(clock.slice(0,2)),Number(clock.slice(3))).getTime():Infinity;
+    rows.push({kind,source:'local',record,order});
+  }
+  return rows.sort((a,b)=>a.order-b.order||['feishu','tasks','business','development'].indexOf(a.kind)-['feishu','tasks','business','development'].indexOf(b.kind)||String(a.record.title||'').localeCompare(String(b.record.title||'')));
 }
 function renderAgenda(){
-  const el=$('agenda'),scroll=el.scrollTop||0;
-  const events=(demo?C.dedupe(sampleEvents()):C.cachedEvents(cache)).filter(e=>!state.hiddenCalendars.includes(e.calendarId)),groups=C.eventTimeline(events,new Date()),list=groups.flatMap(g=>g.items);let index=0;
-  $('agenda-title').textContent='飞书日程';$('event-count').textContent=list.length?groups.length+'天 · '+list.length+'项':'暂无日程';
-  renderAgendaExpansion();
-  el.innerHTML=groups.length?timeline(list,e=>{
-    const start=new Date(e.start),end=new Date(Math.max(e.start,e.end-(e.allDay?1:0))),crossDay=C.key(start)!==C.key(end),shortDate=d=>(d.getMonth()+1)+'/'+d.getDate();
-    const span=crossDay?shortDate(start)+'–'+shortDate(end):'',endTime=(crossDay?shortDate(end)+' ':'')+time(e.end);
-    return `<button class="event ${e.end<Date.now()?'past':''}" data-schedule-source="feishu" data-event="${index++}"><div class="event-time">${e.allDay?'全天':time(e.start)}${e.allDay?'':`<small>${escape(endTime)}</small>`}</div><div class="event-body"><div class="event-title">${escape(e.title)}</div><div class="event-meta">${escape([e.allDay?span:'',e.calendar,e.location].filter(Boolean).join(' · '))}</div></div></button>`;
-  },'',groups):`<div class="empty"><strong>${connected||demo?'今天起暂无已同步日程。':'把飞书日程贴到桌面。'}</strong>${connected||demo?'翻动月历，可同步其他月份的安排。':'连接后，安排会自动跟随飞书更新。'}</div>`;
-  el.scrollTop=scroll;el.querySelectorAll('[data-event]').forEach(b=>b.addEventListener('click',()=>showEvent(list[Number(b.dataset.event)])));renderAgendaLayout();
+  const el=$('agenda'),day=C.key(selected),scroll=agendaDate===day?el.scrollTop||0:0;agendaDate=day;agendaItems=selectedDaySchedules();
+  $('agenda-title').textContent='日程明细';$('event-count').textContent=day.slice(5).replace('-','/')+' · '+agendaItems.length+'项';
+  el.setAttribute('aria-label',day+' 日程明细');renderAgendaExpansion();
+  const row=(item,index)=>{
+    const r=item.record;
+    if(item.source==='feishu'){
+      const start=new Date(r.start),end=new Date(Math.max(r.start,r.end-(r.allDay?1:0))),crossDay=C.key(start)!==C.key(end),shortDate=d=>(d.getMonth()+1)+'/'+d.getDate();
+      const span=crossDay?shortDate(start)+'–'+shortDate(end):'',endTime=(C.key(new Date(r.end))!==day?shortDate(new Date(r.end))+' ':'')+time(r.end);
+      return `<button class="event ${r.end<Date.now()?'past':''}" data-schedule-source="feishu" data-agenda-index="${index}"><div class="event-time">${calendarClock(r,'feishu',day)}${r.allDay?'':`<small>至 ${escape(endTime)}</small>`}</div><div class="event-body"><div class="event-title">${escape(r.title)}</div><div class="event-meta">${escape([r.allDay?span:'',r.calendar,r.location].filter(Boolean).join(' · '))}</div></div></button>`;
+    }
+    const done=item.kind==='tasks'?Boolean(r.done):r.status==='done',label=item.kind==='tasks'?'待办':recordConfig[item.kind].label;
+    const status=done?'已完成':item.kind==='tasks'?'未完成':recordConfig[item.kind].statuses[r.status]||'待安排';
+    const end=calendarValidTime(r.startTime)&&calendarValidTime(r.endTime)?`<small>至 ${escape(r.endTime)}</small>`:'';
+    return `<button class="event" data-schedule-source="local" data-agenda-index="${index}"><div class="event-time">${calendarClock(r,'local',day)||'未定时'}${end}</div><div class="event-body"><div class="event-title">${escape(r.title)}</div><div class="event-meta">${escape(['本机',label,status,r.subject].filter(Boolean).join(' · '))}</div>${r.notes?`<div class="event-notes">${escape(r.notes)}</div>`:''}</div></button>`;
+  };
+  el.innerHTML=agendaItems.length?timeline(agendaItems,row,'',[{date:day,items:agendaItems}]):`<div class="empty"><strong>${escape(day)} 暂无日程安排。</strong>点击月历其他日期查看当天明细。</div>`;
+  el.scrollTop=scroll;renderAgendaLayout();
 }
+$('agenda').onclick=e=>{
+  const button=e.target.closest('[data-agenda-index]');if(!button)return;const item=agendaItems[Number(button.dataset.agendaIndex)];if(!item)return;
+  if(item.source==='feishu')showEvent(item.record);else if(item.kind==='tasks')openTask(item.record.id);else openRecord(item.kind,item.record.id);
+};
 function renderAgendaLayout(){document.body.classList.toggle('agenda-fills-space',state.feishuAgendaExpanded===true&&state.timeManagementExpanded===false);}
 function renderAgendaExpansion(){const expanded=state.feishuAgendaExpanded===true;$('feishu-agenda-toggle').setAttribute('aria-expanded',String(expanded));$('feishu-agenda').classList.toggle('expanded',expanded);$('agenda').hidden=!expanded;renderAgendaLayout();}
 $('feishu-agenda-toggle').onclick=()=>{state.feishuAgendaExpanded=!state.feishuAgendaExpanded;renderAgendaExpansion();save();};
@@ -77,9 +128,15 @@ function dateBadge(date){
 function timeline(records,row,empty='暂无记录',groups=C.timelineGroups(records),historyLabel='过往已完成'){
   if(!groups.length)return `<div class="dimension-empty">${empty}</div>`;
   const markup=g=>`<div class="timeline-group" data-timeline-date="${escape(g.date)}">${dateBadge(g.date)}<div class="timeline-items">${g.items.map(row).join('')}</div></div>`;
-  let html='',history=[];
+  let html='',history=[],completedHeading=false;
   const flushHistory=()=>{if(history.length){html+=`<details class="task-history"><summary>${escape(historyLabel)} · ${history.reduce((sum,g)=>sum+g.items.length,0)}项</summary>${history.map(markup).join('')}</details>`;history=[];}};
-  for(const group of groups){if(group.history)history.push(group);else{flushHistory();html+=markup(group);}}
+  for(const group of groups){
+    if(group.completed){
+      flushHistory();
+      if(!completedHeading){html+=`<div class="completion-heading" role="heading" aria-level="3">已完成 · ${groups.filter(g=>g.completed).reduce((sum,g)=>sum+g.items.length,0)} 项</div>`;completedHeading=true;}
+      html+=markup(group);
+    }else if(group.history)history.push(group);else{flushHistory();html+=markup(group);}
+  }
   flushHistory();return html;
 }
 const workLabels={tasks:'待办',projects:'项目',business:'商务',development:'开发',review:'复盘',memo:'备忘'};
@@ -90,14 +147,15 @@ function taskRow(t,label=''){
 function renderTasks(){
   const pending=state.tasks.filter(t=>!t.done).length;
   $('focus-title').textContent='待办';$('task-progress').textContent=pending+' 未完成 · '+state.tasks.length+' 条';$('task-input').placeholder='记下今天的待办…';
-  $('tasks').innerHTML=timeline(state.tasks,t=>taskRow(t),'写下第一条待办，未完成的会一直保留。',C.taskTimeline(state.tasks,new Date()));
+  const el=$('tasks'),scroll=el.scrollTop||0;
+  el.innerHTML=timeline(state.tasks,t=>taskRow(t),'写下第一条待办，未完成的会一直保留。',C.completedLast(C.taskTimeline(state.tasks,new Date()),'tasks'));el.scrollTop=scroll;
 }
 function openTask(id=null){
   const t=state.tasks.find(x=>x.id===id);editingTask=t?.id||null;$('task-dialog-title').textContent=t?'编辑待办':'新增待办';$('task-title').value=t?.title||'';$('task-date').value=t?.date||C.key(new Date());$('task-time').value=t?.time||'';$('task-feedback').textContent='';$('task-dialog').showModal();$('task-title').focus();
 }
 function renderAll(){
   const el=$('all-records'),scroll=el.scrollTop||0,feed=C.workFeed(state);
-  el.innerHTML=timeline(feed,r=>r.kind==='tasks'?taskRow(r,workLabels[r.kind]):r.kind==='projects'?projectRow(r,workLabels[r.kind]):r.kind==='review'||r.kind==='memo'?personalOverviewRow(r):recordRow(r.kind,r,workLabels[r.kind]),'各类记录按日期和时间汇总在这里。',C.overviewGroups(feed,new Date()),'过往记录');el.scrollTop=scroll;
+  el.innerHTML=timeline(feed,r=>r.kind==='tasks'?taskRow(r,workLabels[r.kind]):r.kind==='projects'?projectRow(r,workLabels[r.kind]):r.kind==='review'||r.kind==='memo'?personalOverviewRow(r):recordRow(r.kind,r,workLabels[r.kind]),'各类记录按日期和时间汇总在这里。',C.completedLast(C.overviewGroups(feed,new Date())),'过往记录');el.scrollTop=scroll;
 }
 function personalOverviewRow(r){
   return `<div class="overview-personal" data-edit-kind="${r.kind}" data-edit-id="${escape(r.id)}"><span class="overview-personal-marker" aria-hidden="true">${r.kind==='review'?'◇':'≡'}</span><button class="overview-personal-edit" aria-label="编辑${workLabels[r.kind]}：${escape(r.date||'未标日期')}"><span class="overview-personal-title">${workLabels[r.kind]}</span><span class="overview-note" title="${escape(r.text)}">${escape(r.text)}</span></button></div>`;
@@ -110,7 +168,8 @@ function renderProjects(){
   const archived=state.projects.filter(p=>p.archived).length;
   $('show-archived').hidden=!archived&&!showArchived;$('show-archived').textContent=showArchived?'返回项目':'归档 '+archived;
   const list=state.projects.filter(p=>Boolean(p.archived)===showArchived);
-  $('projects').innerHTML=timeline(list,projectRow,showArchived?'暂无归档项目。':'暂无项目 · 点击“新项目”开始');
+  const el=$('projects'),scroll=el.scrollTop||0;
+  el.innerHTML=timeline(list,projectRow,showArchived?'暂无归档项目。':'暂无项目 · 点击“新项目”开始',C.completedLast(C.timelineGroups(list),'projects'));el.scrollTop=scroll;
 }
 function openProject(id=null){
   const p=state.projects.find(p=>p.id===id);editingProject=p?.id||null;
@@ -121,7 +180,7 @@ function renderDimensions(){
   const active=dimensions.includes(state.activeDimension)?state.activeDimension:'all';state.activeDimension=active;
   renderTimeManagement();
   state.listStyle=state.listStyle==='short'?'short':'long';document.body.classList.toggle('long-list',state.listStyle==='long');$('view-controls').hidden=!['all','tasks','projects','business','development'].includes(active);for(const style of ['short','long'])$('view-'+style).setAttribute('aria-pressed',String(state.listStyle===style));
-  const counts={all:C.workFeed(state).length,tasks:state.tasks.filter(t=>!t.done).length,projects:state.projects.filter(p=>!p.archived&&!C.projectDone(p)).length,business:state.business.filter(r=>!r.archived&&r.status!=='done').length,development:state.development.filter(r=>!r.archived&&r.status!=='done').length,review:Object.values(state.thoughts).filter(t=>typeof t==='string'&&t.trim()).length,finance:financeUnlocked?state.finance.filter(r=>!r.archived&&r.status!=='settled').length:'锁',memo:state.memos.filter(m=>!m.archived).length};
+  const counts={all:C.workFeed(state).length,tasks:state.tasks.filter(t=>!t.done).length,projects:state.projects.filter(p=>!p.archived&&!C.projectDone(p)).length,business:state.business.filter(r=>!r.archived&&r.status!=='done').length,development:state.development.filter(r=>!r.archived&&r.status!=='done').length,review:C.reviewEntries(state).length,finance:financeUnlocked?state.finance.filter(r=>!r.archived&&!r.deletedAt&&r.status!=='settled').length:'锁',memo:state.memos.filter(m=>!m.archived).length};
   for(const kind of dimensions){$('panel-'+kind).hidden=kind!==active;const tab=$('tab-'+kind);tab.setAttribute('aria-selected',String(kind===active));tab.tabIndex=kind===active?0:-1;$('badge-'+kind).textContent=counts[kind]||'';}renderAll();
 }
 function renderTimeManagement(){
@@ -140,7 +199,8 @@ function renderRecords(kind){
   const config=recordConfig[kind],list=state[kind].filter(r=>Boolean(r.archived)===recordArchiveView[kind]),archived=state[kind].filter(r=>r.archived).length;
   $(kind+'-archived').hidden=!archived&&!recordArchiveView[kind];$(kind+'-archived').textContent=recordArchiveView[kind]?'返回记录':'归档 '+archived;
   $(kind+'-summary').textContent=recordArchiveView[kind]?'已归档 '+list.length+' 条':list.length+' 条 · '+list.filter(r=>r.status!=='done').length+' 未完成';
-  $(kind+'-records').innerHTML=timeline(list,r=>recordRow(kind,r),recordArchiveView[kind]?'暂无归档记录。':'点击“新增”，记录'+config.label+'。');
+  const el=$(kind+'-records'),scroll=el.scrollTop||0;
+  el.innerHTML=timeline(list,r=>recordRow(kind,r),recordArchiveView[kind]?'暂无归档记录。':'点击“新增”，记录'+config.label+'。',C.completedLast(C.timelineGroups(list),kind));el.scrollTop=scroll;
 }
 function recordRow(kind,r,label=''){
   const config=recordConfig[kind],done=r.status==='done',clock=r.startTime?(r.startTime+(r.endTime?'–'+r.endTime:'')):(r.endTime?'截至 '+r.endTime:'');
@@ -155,17 +215,21 @@ function openRecord(kind,id=null){
 }
 function recordClick(kind,e){const check=e.target.closest('[data-record-check]'),edit=e.target.closest('[data-record-edit]');if(check){const record=state[kind].find(r=>r.id===check.dataset.recordCheck);if(record){C.toggleRecord(record);save();renderRecords(kind);renderDimensions();renderCalendar();}}else if(kind==='business'&&edit)openRecord(kind,edit.dataset.recordEdit);}
 const money=cents=>(cents/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-const financeMetricKeys=['negotiating','delivery','pending','revenue'];
-const financeIncomeStages={negotiating:'待接洽',delivery:'待交付',pending:'待结算',settled:'已结算（总营收）'};
+const financeMetricKeys=['negotiating','delivery','pending','forecast','revenue'];
+const financeIncomeStages={negotiating:'待接洽',delivery:'待交付',pending:'待结算',settled:'已结算（实际营收）'};
 const financeStatus=r=>r.type==='income'?(r.status==='settled'?'已结算':financeIncomeStages[r.status]||'待结算'):(r.status==='settled'?'已结清':'待付款');
+function selectFinanceStage(stage){
+  if(!financeUnlocked||stage!=='all'&&!financeMetricKeys.includes(stage))return;
+  financeStage=stage;showFinanceArchived=false;showFinanceDeleted=false;renderFinance();$('finance-records').scrollTop=0;
+}
 function renderFinanceStatuses(status='pending'){
   const income=$('finance-type').value==='income',options=income?financeIncomeStages:{pending:'待付款',settled:'已结清'};
   $('finance-status').innerHTML=Object.entries(options).map(([value,label])=>`<option value="${value}">${label}</option>`).join('');$('finance-status').value=Object.hasOwn(options,status)?status:'pending';
   $('finance-status-label').textContent=income?'财务阶段':'付款状态';
-  $('finance-stage-note').textContent=income?'已结算收入计入总营收。':'支出单独记录，不计入收入的四项汇总。';
+  $('finance-stage-note').textContent=income?'所有收入阶段计入预估营收，已结算收入计入实际营收。':'支出单独记录，不计入预估营收和实际营收。';
 }
 function clearFinance(){
-  ++financeEpoch;financeUnlocked=false;clearTimeout(financeIdleTimer);state.finance=[];editingFinance=null;
+  ++financeEpoch;financeUnlocked=false;clearTimeout(financeIdleTimer);state.finance=[];editingFinance=null;financeStage='all';showFinanceArchived=false;showFinanceDeleted=false;
   $('finance-dialog').close();for(const id of ['finance-title','finance-amount','finance-party','finance-notes'])$(id).value='';
   $('finance-records').innerHTML='';$('finance-summary').textContent='';for(const id of financeMetricKeys)$('finance-'+id).textContent='•••';renderFinance();renderDimensions();
 }
@@ -187,30 +251,151 @@ function renderFinance(){
   $('finance-gate').hidden=financeUnlocked;$('finance-content').hidden=!financeUnlocked;$('finance-unlock').textContent=financeInfo.configured?'解锁财务':'设置财务密码';$('finance-gate-note').textContent=financeInfo.configured?'输入密码后查看账目与金额汇总。':'首次查看前，请在本机设置财务密码。';
   if(!financeUnlocked){$('finance-records').innerHTML='';$('finance-summary').textContent='';for(const id of financeMetricKeys)$('finance-'+id).textContent='•••';return;}
   const totals=C.financeTotals(state.finance);for(const key of financeMetricKeys)$('finance-'+key).textContent=money(totals[key]);
-  const list=state.finance.filter(r=>Boolean(r.archived)===showFinanceArchived),archived=state.finance.filter(r=>r.archived).length;
+  const list=C.financeRecords(state.finance,financeStage,showFinanceDeleted?'deleted':showFinanceArchived?'archived':'active'),archived=C.financeRecords(state.finance,'all','archived').length,deleted=C.financeRecords(state.finance,'all','deleted').length;
+  for(const key of financeMetricKeys)$('finance-stage-'+key).setAttribute('aria-pressed',String(!showFinanceArchived&&!showFinanceDeleted&&financeStage===key));
+  $('finance-all').setAttribute('aria-pressed',String(!showFinanceArchived&&!showFinanceDeleted&&financeStage==='all'));
   $('finance-archived').hidden=!archived&&!showFinanceArchived;$('finance-archived').textContent=showFinanceArchived?'返回账目':'归档 '+archived;
-  $('finance-summary').textContent=(showFinanceArchived?'已归档 ':'')+list.length+' 笔 · '+list.filter(r=>r.status!=='settled').length+' 未结清';
-  $('finance-records').innerHTML=timeline(list,r=>`<button class="finance-row" data-edit-kind="finance" data-edit-id="${escape(r.id)}" data-finance="${escape(r.id)}" aria-label="编辑财务：${escape(r.title)}"><span class="finance-heading"><strong>${escape(r.title)}</strong><span class="finance-amount ${r.type==='income'?'income':'expense'}">${r.type==='income'?'+':'−'}${money(r.amountCents)}</span></span><span class="record-meta">${escape([r.type==='income'?'收入':'支出',r.party,financeStatus(r)].filter(Boolean).join(' · '))}</span>${r.notes?`<span class="record-notes">${escape(r.notes)}</span>`:''}</button>`,'点击“记一笔”，记录收入和支出。');
+  $('finance-archived').setAttribute('aria-pressed',String(showFinanceArchived));
+  $('finance-deleted').hidden=!deleted&&!showFinanceDeleted;$('finance-deleted').textContent='最近删除 '+deleted;$('finance-deleted').setAttribute('aria-pressed',String(showFinanceDeleted));
+  const stageLabel=financeStage==='forecast'?'预估营收':financeStage==='revenue'?'实际营收':financeIncomeStages[financeStage]||'全部';
+  $('finance-summary').textContent=(showFinanceDeleted?'最近删除':showFinanceArchived?'已归档':stageLabel)+' · '+list.length+' 笔';
+  const el=$('finance-records'),scroll=el.scrollTop||0;
+  const row=r=>`<div class="finance-item ${r.status==='settled'?'settled':''}" data-edit-kind="finance" data-edit-id="${escape(r.id)}"><button class="finance-row" data-finance="${escape(r.id)}" aria-label="编辑财务：${escape(r.title)}"><span class="finance-heading"><strong>${escape(r.title)}</strong><span class="finance-amount ${r.type==='income'?'income':'expense'}">${r.type==='income'?'+':'−'}${money(r.amountCents)}</span></span><span class="record-meta">${escape([r.type==='income'?'收入':'支出',r.party,financeStatus(r)].filter(Boolean).join(' · '))}</span>${r.notes?`<span class="record-notes">${escape(r.notes)}</span>`:''}</button>${C.nextFinanceStatus(r)?`<button class="finance-advance" data-finance-advance="${escape(r.id)}" data-finance-from="${C.financeStage(r)}" data-finance-next="${C.nextFinanceStatus(r)}" aria-label="推进：${escape(r.title)}，下一阶段${C.nextFinanceStatus(r)==='settled'?'已结算':financeIncomeStages[C.nextFinanceStatus(r)]}" ${financeMutationBusy?'disabled':''}>→ ${C.nextFinanceStatus(r)==='settled'?'已结算':financeIncomeStages[C.nextFinanceStatus(r)]}</button>`:''}</div>`;
+  const unsettled=list.filter(r=>r.status!=='settled'),settled=list.filter(r=>r.status==='settled');
+  const stageGroups=[['negotiating','待接洽'],['delivery','待交付'],['pending','待结算'],['expense','待付款']].map(([stage,label])=>({stage,label,records:unsettled.filter(r=>stage==='expense'?r.type!=='income':C.financeStage(r)===stage)})).filter(group=>group.records.length);
+  const grouped=['all','forecast'].includes(financeStage)&&!showFinanceArchived&&!showFinanceDeleted&&stageGroups.length>1;
+  const unsettledMarkup=grouped?stageGroups.map(group=>`<div class="finance-stage-heading" data-finance-group="${group.stage}" role="heading" aria-level="3">${group.label} · ${group.records.length} 笔</div>`+timeline(group.records,row)).join(''):unsettled.length?timeline(unsettled,row):'';
+  const empty=showFinanceDeleted?'没有已删除的账目。':showFinanceArchived?'没有已归档的账目。':financeStage!=='all'?'当前阶段暂无账目。':'点击“记一笔”，记录收入和支出。';
+  el.innerHTML=list.length?unsettledMarkup+(settled.length?`<div class="finance-settled-heading" role="heading" aria-level="3">已结算 / 已结清 · ${settled.length} 笔</div>`+timeline(settled,row):''):timeline([],row,empty);
+  el.scrollTop=scroll;
 }
 function openFinance(id=null){
-  if(!financeUnlocked){renderFinance();return;}
+  if(!financeUnlocked||financeMutationBusy){renderFinance();return;}
   const r=state.finance.find(x=>x.id===id);editingFinance=r?.id||null;
-  $('finance-dialog-title').textContent=r?'编辑账目':'记一笔';$('finance-title').value=r?.title||'';$('finance-type').value=r?.type||'income';$('finance-amount').value=r?(r.amountCents/100).toFixed(2):'';$('finance-date').value=r?.date||C.key(new Date());renderFinanceStatuses(r?(r.status||'pending'):'negotiating');$('finance-party').value=r?.party||'';$('finance-notes').value=r?.notes||'';$('finance-feedback').textContent='';$('archive-finance').hidden=!r;$('archive-finance').textContent=r?.archived?'恢复账目':'归档账目';$('finance-dialog').showModal();$('finance-title').focus();
+  const deleted=Boolean(r?.deletedAt);$('finance-fields').disabled=deleted;$('save-finance').hidden=deleted;$('archive-finance').hidden=!r||deleted;$('delete-finance').hidden=!r;$('delete-finance').textContent=deleted?'恢复账目':'删除账目';$('delete-finance').classList.toggle('danger',!deleted);
+  $('finance-dialog-title').textContent=deleted?'已删除账目':r?'编辑账目':'记一笔';$('finance-title').value=r?.title||'';$('finance-type').value=r?.type||'income';$('finance-amount').value=r?(r.amountCents/100).toFixed(2):'';$('finance-date').value=r?.date||C.key(new Date());renderFinanceStatuses(r?(r.status||'pending'):['all','forecast'].includes(financeStage)?'negotiating':financeStage==='revenue'?'settled':financeStage);$('finance-party').value=r?.party||'';$('finance-notes').value=r?.notes||'';$('finance-feedback').textContent='';$('archive-finance').textContent=r?.archived?'恢复账目':'归档账目';$('finance-dialog').showModal();(deleted?$('delete-finance'):$('finance-title')).focus();
+}
+async function changeFinanceDeletion(){
+  if(!financeUnlocked||financeMutationBusy)return;
+  const record=state.finance.find(r=>r.id===editingFinance);if(!record)return;
+  const deleted=!record.deletedAt,epoch=financeEpoch;
+  financeMutationBusy=true;$('finance-fields').disabled=true;for(const id of ['delete-finance','save-finance','archive-finance'])$(id).disabled=true;
+  $('finance-feedback').textContent='';
+  try{
+    if(dirty&&!await persist())throw new Error('最新修改尚未保存，请保存成功后重试。');
+    if(!financeUnlocked||epoch!==financeEpoch)return;
+    if(native){
+      const result=await call('financeDelete',{id:record.id,deleted});
+      if(!financeUnlocked||epoch!==financeEpoch)return;
+      state.finance=result.records;
+    }else{
+      const previous=state.finance;
+      state.finance=state.finance.map(r=>{if(r.id!==record.id)return r;const next={...r,updatedAt:Date.now()};if(deleted)next.deletedAt=Date.now();else delete next.deletedAt;return next;});
+      save();if(!await persist()){state.finance=previous;throw new Error('保存失败，账目未更改，请重试。');}
+    }
+    renderFinance();renderDimensions();$('finance-dialog').close();toast(deleted?'账目已删除，可在“最近删除”恢复':record.archived?'已恢复，可在“归档”查看':'账目已恢复');
+  }catch(error){if(financeUnlocked&&epoch===financeEpoch)$('finance-feedback').textContent=error.message;}
+  finally{financeMutationBusy=false;for(const id of ['delete-finance','save-finance','archive-finance'])$(id).disabled=false;$('finance-fields').disabled=Boolean(state.finance.find(r=>r.id===editingFinance)?.deletedAt);}
+}
+async function advanceFinance(id,from,next){
+  if(!financeUnlocked||financeMutationBusy)return;
+  const record=state.finance.find(r=>r.id===id);
+  if(!record||C.financeStage(record)!==from||C.nextFinanceStatus(record)!==next)return;
+  const epoch=financeEpoch;financeMutationBusy=true;
+  for(const control of $('finance-records').querySelectorAll('[data-finance-advance]'))control.disabled=true;
+  try{
+    if(dirty&&!await persist())throw new Error('最新修改尚未保存，请保存成功后重试。');
+    if(!financeUnlocked||epoch!==financeEpoch)return;
+    if(native){
+      const result=await call('financeAdvance',{id,from});
+      if(!financeUnlocked||epoch!==financeEpoch)return;
+      state.finance=result.records;
+    }else{
+      const previous=state.finance;state.finance=state.finance.map(r=>r.id===id?{...r,status:next,updatedAt:Date.now()}:r);
+      save();if(!await persist()){state.finance=previous;throw new Error('保存失败，保留原阶段，请重试。');}
+    }
+    renderFinance();renderDimensions();$('finance-records').focus({preventScroll:true});toast('已进入'+(next==='settled'?'已结算':financeIncomeStages[next]));
+  }catch(error){if(financeUnlocked&&epoch===financeEpoch)toast(error.message);}
+  finally{financeMutationBusy=false;for(const control of $('finance-records').querySelectorAll('[data-finance-advance]'))control.disabled=false;}
 }
 function updateThought(date,text){
+  if(state.thoughts[date]!==text)delete state.reviewSubmitted[date];
   state.thoughts[date]=text;renderDimensions();save();
 }
-function renderThought(){
-  const today=C.key(new Date()),entries=Object.entries(state.thoughts).filter(([date,text])=>C.validDate(date)&&typeof text==='string'&&text.trim()).map(([date,text])=>({date,text}));
-  if(!entries.some(r=>r.date===today))entries.push({date:today,text:''});
-  $('thought-history').textContent='搜索';$('thought-reminder').innerHTML=svg('bell')+(state.reflectionEnabled?state.reflectionTime:'提醒');
-  $('review-records').innerHTML=timeline(entries,r=>r.date===today?`<div class="review-editor"><p class="prompt" id="prompt">${escape(state.prompt)}</p><textarea id="thought" maxlength="20000" aria-label="今日复盘" placeholder="今天的进展、卡点和思考…"></textarea><div class="thought-footer"><span>右下角拖动拉长 · 自动保存</span><span id="word-count">${Array.from(r.text).length} 字</span></div></div>`:`<button class="review-entry" data-edit-kind="review" data-edit-id="${escape(r.date)}" data-review="${escape(r.date)}" aria-label="编辑 ${escape(r.date)} 的复盘"><span>${escape(r.text)}</span><small>编辑</small></button>`);
-  $('thought').value=state.thoughts[today]||'';
-  $('thought').addEventListener('input',()=>{updateThought(today,$('thought').value);$('word-count').textContent=Array.from($('thought').value).length+' 字';});
-  $('thought').addEventListener('blur',()=>{if(dirty)persist();renderCalendar();});
+function reviewRecord(id){
+  const entry=state.reviews.find(r=>r&&r.id===id);if(entry)return {...entry,legacy:false};
+  return C.validDate(id)&&Object.hasOwn(state.thoughts,id)?{id,date:id,text:state.thoughts[id],legacy:true,submittedAt:state.reviewSubmitted[id]||0}:null;
 }
-function openReview(date=C.key(new Date())){
-  if(dirty)persist();reviewEditDate=date;$('review-date').value=date;$('review-date').max=C.key(new Date());$('review-edit').value=state.thoughts[date]||'';$('review-dialog').showModal();$('review-edit').focus();
+function reviewIsSubmitted(id){const entry=reviewRecord(id);return Boolean(entry&&Number.isFinite(entry.submittedAt)&&entry.submittedAt>0&&typeof entry.text==='string'&&entry.text.trim());}
+function setReviewSubmitted(id,value){
+  const entry=state.reviews.find(r=>r&&r.id===id);
+  if(entry){if(value)entry.submittedAt=value;else delete entry.submittedAt;}
+  else if(value)state.reviewSubmitted[id]=value;else delete state.reviewSubmitted[id];
+}
+function reviewFeedback(message=''){$('review-feedback').textContent=message;$('review-feedback').hidden=!message;}
+function renderThought(){
+  const entries=C.reviewEntries(state),list=$('review-records'),scroll=list.scrollTop||0;
+  $('thought-history').textContent='搜索';$('thought-reminder').innerHTML=svg('bell')+(state.reflectionEnabled?state.reflectionTime:'提醒');
+  $('add-review').disabled=Boolean(reviewSubmittingId);$('write-review').disabled=Boolean(reviewSubmittingId);
+  list.innerHTML=timeline(entries,r=>`<button class="review-entry ${reviewIsSubmitted(r.id)?'submitted':''}" data-edit-kind="review" data-edit-id="${escape(r.id)}" data-review="${escape(r.id)}" aria-label="编辑复盘：${escape(r.date)} ${escape(r.text.split('\n')[0].slice(0,30))}"><span>${escape(r.text)}</span><small>${reviewIsSubmitted(r.id)?'已提交 · '+time(r.submittedAt):r.legacy?'已保存':'草稿'} · 修改</small></button>`,'点击“新增”，写一条新的复盘；同一天可新增多条。');
+  list.scrollTop=scroll;
+}
+function saveReviewDraft(){
+  if(reviewSubmittingId)return false;
+  const date=$('review-date').value,text=$('review-edit').value;
+  if(!C.validDate(date)||date>C.key(new Date())){$('review-save-status').textContent='请选择今天或过去的有效日期。';return false;}
+  const existing=reviewRecord(editingReviewId);
+  if(existing?.legacy){
+    if(date!==existing.date){$('review-date').value=existing.date;return false;}
+    updateThought(date,text);
+  }else{
+    if(!existing&&!text.trim())return false;
+    const now=Date.now();let record=state.reviews.find(r=>r&&r.id===editingReviewId);
+    if(!record){record={id:'review-'+crypto.randomUUID(),date,text,createdAt:now,updatedAt:now};state.reviews.push(record);editingReviewId=record.id;}
+    else if(record.text!==text||record.date!==date){record.date=date;record.text=text;record.updatedAt=now;delete record.submittedAt;}
+    save();renderDimensions();
+  }
+  reviewEditDate=date;reviewFeedback();$('review-save-status').textContent=reviewIsSubmitted(editingReviewId)?'已提交 · 修改后可再次提交':'草稿自动保存 · 写好后提交';
+  renderThought();renderCalendar();return true;
+}
+async function submitReview(id=editingReviewId){
+  if(reviewSubmittingId)return false;
+  if(!id){if(!saveReviewDraft()){$('review-save-status').textContent='先写一点复盘内容，再提交。';return false;}id=editingReviewId;}
+  const record=reviewRecord(id);
+  if(!record||!C.validDate(record.date)||record.date>C.key(new Date())){reviewFeedback('请选择有效的复盘日期。');return false;}
+  const {date,text}=record;
+  if(typeof text!=='string'||!text.trim()){$('review-save-status').textContent='先写一点复盘内容，再提交。';return false;}
+  if(reviewIsSubmitted(id)){if($('review-dialog').open&&editingReviewId===id)$('review-dialog').close();return true;}
+  const stamp=Date.now();reviewSubmittingId=id;reviewFeedback();
+  for(const name of ['add-review','write-review','submit-review','review-edit','review-date'])$(name).disabled=true;
+  setReviewSubmitted(id,stamp);save();
+  try{
+    if(!await persist())throw new Error('提交未完成，请重试；复盘内容仍保留在草稿中。');
+    const current=reviewRecord(id);
+    if(!current||current.text!==text||current.date!==date||current.submittedAt!==stamp)throw new Error('内容已变化，请检查后重新提交。');
+    reviewSubmittingId='';renderThought();renderDimensions();renderCalendar();
+    if($('review-dialog').open&&editingReviewId===id)$('review-dialog').close();
+    toast('复盘已提交');return true;
+  }catch(e){
+    if(reviewRecord(id)?.submittedAt===stamp)setReviewSubmitted(id,0);
+    save();reviewFeedback(e.message);$('review-save-status').textContent=e.message;return false;
+  }finally{
+    reviewSubmittingId='';for(const name of ['add-review','write-review','submit-review','review-edit'])$(name).disabled=false;
+    $('review-date').disabled=Boolean(reviewRecord(editingReviewId)?.legacy);
+  }
+}
+function openNewReview(date=C.key(new Date())){
+  if(reviewSubmittingId)return;
+  if(dirty)persist();editingReviewId=null;reviewEditDate=C.validDate(date)&&date<=C.key(new Date())?date:C.key(new Date());
+  $('review-dialog-title').textContent='新增复盘';$('review-date').disabled=false;$('review-date').value=reviewEditDate;$('review-date').max=C.key(new Date());$('review-edit').value='';
+  $('review-save-status').textContent='每次新增独立保存 · 草稿自动保存';$('review-dialog').showModal();$('review-edit').focus();
+}
+function openReview(id){
+  if(reviewSubmittingId)return;
+  const entry=reviewRecord(id);if(!entry){openNewReview(C.validDate(id)?id:C.key(new Date()));return;}
+  if(dirty)persist();editingReviewId=id;reviewEditDate=entry.date;
+  $('review-dialog-title').textContent='修改复盘';$('review-date').value=entry.date;$('review-date').max=C.key(new Date());$('review-date').disabled=Boolean(entry.legacy);$('review-edit').value=entry.text||'';
+  $('review-save-status').textContent=reviewIsSubmitted(id)?'已提交 · 修改后可再次提交':'草稿自动保存 · 写好后提交';$('review-dialog').showModal();$('review-edit').focus();
 }
 function renderWindow(){
   document.body.classList.toggle('locked',state.locked);$('lock').innerHTML=svg(state.locked?'lock':'unlock');$('lock').classList.toggle('active',state.locked);$('lock').title=state.locked?'解除位置锁定':state.mode==='desktop'?'锁定并贴到桌面':'锁定位置';$('lock').setAttribute('aria-label',$('lock').title);$('lock').setAttribute('aria-pressed',String(state.locked));
@@ -232,7 +417,7 @@ function saveMemoDraft(){
   const now=Date.now();if(memo)Object.assign(memo,{date,text,updatedAt:now});else{memo={id:crypto.randomUUID(),date,text,archived:false,createdAt:now,updatedAt:now};state.memos.push(memo);editingMemo=memo.id;showMemoArchived=false;$('memo-records').scrollTop=0;}
   $('memo-dialog-title').textContent='编辑备忘';$('memo-feedback').textContent='';$('archive-memo').hidden=false;$('archive-memo').textContent=memo.archived?'恢复备忘':'归档备忘';save();renderMemos();renderDimensions();return true;
 }
-function render(){renderCalendar();renderAgenda();renderTasks();renderProjects();renderRecords('business');renderRecords('development');renderFinance();renderThought();renderMemos();renderWindow();renderDimensions();}
+function render(){renderCalendar();renderTasks();renderProjects();renderRecords('business');renderRecords('development');renderFinance();renderThought();renderMemos();renderWindow();renderDimensions();}
 function renderSettings(){
   $('finance-security-status').textContent=financeInfo.configured?'已设置财务密码；切换分页、收起或闲置 5 分钟后锁定。':'尚未设置密码，财务内容保持隐藏。';
   $('window-mode').value=state.mode;$('lock-setting').checked=state.locked;$('app-id').value=appId;$('app-secret').placeholder=appId?'已保存；留空沿用本机凭据':'只存入本机钥匙串';
@@ -241,7 +426,7 @@ function renderSettings(){
   $('cli-status').textContent=cliInfo.installed?(source==='cli'&&connected?'已通过官方 CLI 连接，只读取日历。':cliInfo.authenticated?'CLI 已登录，还需授权读取个人日历。':'官方 CLI 已安装，授权后自动同步日历。'):'未检测到官方 CLI。';$('cli-connect').textContent=source==='cli'&&connected?'重新检查连接':'连接飞书 CLI';$('authorize').textContent=connected?'重新授权':'连接飞书';$('browser-note').hidden=native;
   $('calendar-filters').innerHTML=calendars.length?'<p class="hint">选择要显示的日历</p>'+calendars.map(c=>`<label class="toggle-row"><span>${escape(c.summary_alias||c.summary||'未命名日历')}${['primary','shared'].includes(c.type)&&['owner','writer','reader'].includes(c.role)?'':'<span class="hint">该类型或权限暂不支持</span>'}</span><input type="checkbox" data-calendar="${escape(c.calendar_id)}" ${state.hiddenCalendars.includes(c.calendar_id)?'':'checked'} ${!['primary','shared'].includes(c.type)||!['owner','writer','reader'].includes(c.role)?'disabled':''}></label>`).join(''):'';
 }
-function select(d){if(dirty)persist();selected=d;const changed=C.monthKey(view)!==C.monthKey(d);view=new Date(d.getFullYear(),d.getMonth(),1);renderCalendar();renderAgenda();if(changed)sync();}
+function select(d,revealAgenda=false){if(dirty)persist();selected=d;const changed=C.monthKey(view)!==C.monthKey(d);view=new Date(d.getFullYear(),d.getMonth(),1);if(revealAgenda&&!state.feishuAgendaExpanded){state.feishuAgendaExpanded=true;save();}renderCalendar();if(changed)sync();}
 function openSettings(){renderSettings();$('settings-dialog').showModal();}
 async function applyWindow(){renderWindow();save();if(native){try{await call('window',{mode:state.mode,locked:state.locked});}catch(e){toast(e.message);}}else toast('Mac 应用中可固定桌面和锁定位置');}
 async function sync(){
@@ -259,7 +444,7 @@ async function sync(){
     await call('saveCache',{cache});$('auth-feedback').textContent='已连接，日程已更新。';
     if(state.eventsEnabled)await schedule();
   }catch(e){if(generation===syncGeneration){syncError=e.message;$('auth-feedback').textContent=e.message;}}
-  finally{syncing=false;renderCalendar();renderAgenda();if($('settings-dialog').open)renderSettings();if(connected&&(syncAgain||target!==C.monthKey(view)))sync();}
+  finally{syncing=false;renderCalendar();if($('settings-dialog').open)renderSettings();if(connected&&(syncAgain||target!==C.monthKey(view)))sync();}
 }
 async function schedule(){
   if(!native)return;
@@ -285,9 +470,9 @@ function showEvent(e){
 }
 function openURL(url){if(!/^https?:\/\//i.test(url)){toast('此链接格式暂不支持');return;}if(native)call('openURL',{url}).catch(e=>toast(e.message));else window.open(url,'_blank','noopener,noreferrer');}
 let suppressCalendarClick=false,calendarPointer=null,wheelGesture={last:0,total:0,used:false};
-function navigateMonth(delta){select(C.shiftMonth(selected,delta));}
-$('calendar').addEventListener('click',e=>{if(suppressCalendarClick){e.preventDefault();return;}const b=e.target.closest('[data-day]');if(b)select(C.fromKey(b.dataset.day));});
-$('prev').onclick=()=>navigateMonth(-1);$('next').onclick=()=>navigateMonth(1);$('today').onclick=()=>select(new Date());
+function navigateMonth(delta){select(C.shiftMonth(selected,delta),true);}
+$('calendar').addEventListener('click',e=>{if(suppressCalendarClick){e.preventDefault();return;}const b=e.target.closest('[data-day]');if(b)select(C.fromKey(b.dataset.day),true);});
+$('prev').onclick=()=>navigateMonth(-1);$('next').onclick=()=>navigateMonth(1);$('today').onclick=()=>select(new Date(),true);
 $('calendar').addEventListener('pointerdown',e=>{if(e.button===0&&e.isPrimary!==false)calendarPointer={x:e.clientX,y:e.clientY};});
 $('calendar').addEventListener('pointercancel',()=>{calendarPointer=null;});
 $('calendar').addEventListener('pointerup',e=>{if(!calendarPointer)return;const dx=e.clientX-calendarPointer.x,dy=e.clientY-calendarPointer.y;calendarPointer=null;if(Math.abs(dx)>=55&&Math.abs(dx)>Math.abs(dy)*1.4){suppressCalendarClick=true;navigateMonth(dx<0?1:-1);setTimeout(()=>{suppressCalendarClick=false;},0);}});
@@ -309,8 +494,9 @@ $('archive-record').onclick=()=>{if(!editingRecord)return;const {kind,id}=editin
 $('settings').onclick=openSettings;$('connection').onclick=openSettings;$('thought-reminder').onclick=()=>{openSettings();$('reflection-enabled').focus();};
 $('refresh').onclick=()=>{if(connected)sync();else openSettings();};
 $('lock').onclick=()=>{state.locked=!state.locked;applyWindow();};$('lock-setting').onchange=()=>{state.locked=$('lock-setting').checked;applyWindow();};$('window-mode').onchange=()=>{state.mode=$('window-mode').value;applyWindow();};
-$('hide').onclick=async()=>{await lockFinancialView();if(native)await call('hide');else toast('Mac 应用收起后，可从菜单栏再次打开');};
+$('hide').onclick=async()=>{await lockFinancialView();if(native)await call('minimize');else toast('Mac 应用最小化后，点击 Dock 图标可恢复窗口');};
 $('drag-area').addEventListener('mousedown',e=>{if(native&&!state.locked&&!e.target.closest('button'))call('drag');});
+$('new-task').onclick=()=>openTask();
 $('add-task').onsubmit=e=>{e.preventDefault();const title=$('task-input').value.trim();if(!title)return;state.tasks.push({id:crypto.randomUUID(),title,date:C.key(new Date()),time:$('task-input-time').value,done:false,createdAt:Date.now()});$('task-input').value='';$('task-input-time').value='';save();renderTasks();renderDimensions();renderCalendar();$('tasks').scrollTop=0;};
 function taskClick(e){
   const check=e.target.closest('[data-check]'),del=e.target.closest('[data-delete]'),edit=e.target.closest('[data-task-edit]');
@@ -338,19 +524,28 @@ $('project-form').onsubmit=e=>{
 $('archive-project').onclick=()=>{const p=state.projects.find(p=>p.id===editingProject);if(!p)return;p.archived=!p.archived;if(!p.archived)showArchived=false;p.updatedAt=Date.now();save();renderProjects();renderDimensions();$('project-dialog').close();toast(p.archived?'项目已归档，可随时恢复':'项目已恢复');};
 $('add-finance').onclick=()=>openFinance();
 $('finance-type').onchange=()=>renderFinanceStatuses($('finance-status').value);
-$('finance-archived').onclick=()=>{showFinanceArchived=!showFinanceArchived;renderFinance();};
+$('finance-all').onclick=()=>selectFinanceStage('all');
+for(const key of financeMetricKeys)$('finance-stage-'+key).onclick=()=>selectFinanceStage(key);
+$('finance-archived').onclick=()=>{if(!financeUnlocked)return;showFinanceArchived=!showFinanceArchived;showFinanceDeleted=false;financeStage='all';renderFinance();$('finance-records').scrollTop=0;};
+$('finance-deleted').onclick=()=>{if(!financeUnlocked)return;showFinanceDeleted=!showFinanceDeleted;showFinanceArchived=false;financeStage='all';renderFinance();$('finance-records').scrollTop=0;};
+$('delete-finance').onclick=changeFinanceDeletion;
+$('finance-records').onclick=e=>{
+  const action=e.target.closest('[data-finance-advance]');
+  if(action){if(e.detail>1){e.preventDefault();return;}return advanceFinance(action.dataset.financeAdvance,action.dataset.financeFrom,action.dataset.financeNext);}
+  const row=e.target.closest('[data-finance]');if(row)openFinance(row.dataset.finance);
+};
 $('finance-unlock').onclick=unlockFinance;$('finance-lock-now').onclick=()=>void lockFinancialView();
 $('finance-password').onclick=async()=>{if(!native){toast('请在 Mac 应用中设置财务密码');return;}try{await lockFinancialView();const result=await call('financePassword');financeInfo=result.info||financeInfo;clearFinance();renderSettings();if(result.changed)toast('财务密码已更新');}catch(e){toast(e.message);}};
 $('finance-form').onsubmit=async e=>{
-  e.preventDefault();if(!financeUnlocked)return;const title=$('finance-title').value.trim(),date=$('finance-date').value,amount=C.amountCents($('finance-amount').value);
+  e.preventDefault();if(!financeUnlocked||financeMutationBusy||state.finance.find(r=>r.id===editingFinance)?.deletedAt)return;const title=$('finance-title').value.trim(),date=$('finance-date').value,amount=C.amountCents($('finance-amount').value);
   if(!title){$('finance-title').focus();return;}if(!C.validDate(date)){$('finance-feedback').textContent='请选择有效日期。';return;}if(amount===null){$('finance-feedback').textContent='请输入大于 0 的金额，最多两位小数。';return;}
   const type=$('finance-type').value==='income'?'income':'expense',stage=$('finance-status').value,status=type==='income'&&Object.hasOwn(financeIncomeStages,stage)?stage:stage==='settled'?'settled':'pending';
   const existing=state.finance.find(r=>r.id===editingFinance),now=Date.now(),data={title,date,amountCents:amount,type,status,party:$('finance-party').value.trim(),notes:$('finance-notes').value.trim(),updatedAt:now};
-  if(existing)Object.assign(existing,data);else{state.finance.push({id:crypto.randomUUID(),createdAt:now,archived:false,...data});showFinanceArchived=false;}
+  if(existing)Object.assign(existing,data);else{state.finance.push({id:crypto.randomUUID(),createdAt:now,archived:false,...data});showFinanceArchived=false;showFinanceDeleted=false;financeStage='all';}
   save();renderFinance();renderDimensions();if(!existing)$('finance-records').scrollTop=0;try{await persist();$('finance-dialog').close();}catch(e){$('finance-feedback').textContent=e.message;}
 };
-$('archive-finance').onclick=async()=>{if(!financeUnlocked)return;const r=state.finance.find(x=>x.id===editingFinance);if(!r)return;r.archived=!r.archived;r.updatedAt=Date.now();if(!r.archived)showFinanceArchived=false;save();renderFinance();renderDimensions();await persist();$('finance-dialog').close();};
-$('write-review').onclick=()=>openReview();
+$('archive-finance').onclick=async()=>{if(!financeUnlocked||financeMutationBusy)return;const r=state.finance.find(x=>x.id===editingFinance);if(!r||r.deletedAt)return;r.archived=!r.archived;r.updatedAt=Date.now();if(!r.archived)showFinanceArchived=false;save();renderFinance();renderDimensions();await persist();$('finance-dialog').close();};
+$('add-review').onclick=()=>openNewReview();$('write-review').onclick=()=>openNewReview();
 $('add-memo').onclick=()=>openMemo();$('memo-archived').onclick=()=>{showMemoArchived=!showMemoArchived;renderMemos();};
 $('memo-text').addEventListener('input',saveMemoDraft);$('memo-date').onchange=saveMemoDraft;$('memo-text').addEventListener('blur',()=>{if(dirty)persist();});
 $('memo-text').addEventListener('keydown',e=>{if(e.key==='Enter')e.stopPropagation();});
@@ -358,14 +553,20 @@ $('memo-form').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing
 $('memo-form').onsubmit=async e=>{e.preventDefault();if(!saveMemoDraft()){if(!$('memo-text').value.trim())$('memo-feedback').textContent='先写一点内容。';return;}await persist();$('memo-dialog').close();};
 $('archive-memo').onclick=async()=>{const memo=state.memos.find(m=>m.id===editingMemo);if(!memo)return;memo.archived=!memo.archived;memo.updatedAt=Date.now();if(!memo.archived)showMemoArchived=false;save();renderMemos();renderDimensions();await persist();$('memo-dialog').close();};
 
-$('review-edit').addEventListener('input',()=>{if(!C.validDate(reviewEditDate))return;updateThought(reviewEditDate,$('review-edit').value);renderThought();renderCalendar();});
+$('review-edit').addEventListener('input',saveReviewDraft);
+$('submit-review').onclick=()=>submitReview();
 $('review-edit').addEventListener('blur',()=>{if(dirty)persist();});
-$('review-date').onchange=()=>{const date=$('review-date').value;if(!C.validDate(date)||date>C.key(new Date())){$('review-date').value=reviewEditDate;return;}if(dirty)persist();reviewEditDate=date;$('review-edit').value=state.thoughts[date]||'';};
+$('review-date').onchange=()=>{
+  if(reviewSubmittingId)return;
+  const date=$('review-date').value;
+  if(!C.validDate(date)||date>C.key(new Date())){$('review-date').value=reviewEditDate;$('review-save-status').textContent='请选择今天或过去的有效日期。';return;}
+  saveReviewDraft();
+};
 function renderHistory(){
-  const query=$('history-search').value.trim().toLocaleLowerCase(),entries=Object.entries(state.thoughts).filter(([date,text])=>typeof text==='string'&&text.trim()).sort((a,b)=>b[0].localeCompare(a[0]));
-  const filtered=entries.filter(([date,text])=>(date+' '+text).toLocaleLowerCase().includes(query));
-  $('history-count').textContent=entries.length+' 篇复盘 · '+(query?'找到 '+filtered.length+' 篇':'按日期自动保存');
-  $('history-list').innerHTML=filtered.length?filtered.map(([date,text])=>`<button class="history-entry" data-history="${escape(date)}"><time>${escape(date)}</time><span>${escape(text.trim().slice(0,160))}</span><small>${Array.from(text).length} 字 ↗</small></button>`).join(''):'<p class="hint">'+(query?'没有匹配的复盘。':'写下第一篇复盘，这里会自动留下记录。')+'</p>';
+  const query=$('history-search').value.trim().toLocaleLowerCase(),entries=C.reviewEntries(state).sort((a,b)=>b.date.localeCompare(a.date)||(b.updatedAt||0)-(a.updatedAt||0));
+  const filtered=entries.filter(r=>(r.date+' '+r.text).toLocaleLowerCase().includes(query));
+  $('history-count').textContent=entries.length+' 条复盘 · '+(query?'找到 '+filtered.length+' 条':'按日期累计保存');
+  $('history-list').innerHTML=filtered.length?filtered.map(r=>`<button class="history-entry" data-history="${escape(r.id)}"><time>${escape(r.date)}</time><span>${escape(r.text.trim().slice(0,160))}</span><small>${reviewIsSubmitted(r.id)?'已提交 · ':''}${Array.from(r.text).length} 字 ↗</small></button>`).join(''):'<p class="hint">'+(query?'没有匹配的复盘。':'点击“新增”，写下第一条复盘。')+'</p>';
 }
 $('thought-history').onclick=()=>{if(dirty)persist();$('history-search').value='';renderHistory();$('history-dialog').showModal();};
 $('history-search').oninput=renderHistory;
@@ -375,11 +576,11 @@ $('task-form').onsubmit=e=>{
   e.preventDefault();const title=$('task-title').value.trim(),date=$('task-date').value;if(!title)return;if(!C.validDate(date)){$('task-feedback').textContent='请选择有效日期。';return;}
   const existing=state.tasks.find(t=>t.id===editingTask),now=Date.now(),data={title,date,time:$('task-time').value,updatedAt:now};if(existing)Object.assign(existing,data);else state.tasks.push({id:crypto.randomUUID(),createdAt:now,done:false,...data});save();renderTasks();renderCalendar();renderDimensions();$('task-dialog').close();
 };
-$('add-all').onclick=()=>{const kind=$('all-kind').value;if(kind==='tasks')openTask();else if(kind==='projects')openProject();else if(kind==='review')openReview();else if(kind==='memo')openMemo();else openRecord(kind);};
+$('add-all').onclick=()=>{const kind=$('all-kind').value;if(kind==='tasks')openTask();else if(kind==='projects')openProject();else if(kind==='review')openNewReview();else if(kind==='memo')openMemo();else openRecord(kind);};
 for(const style of ['short','long'])$('view-'+style).onclick=()=>{state.listStyle=style;renderDimensions();save();};
 function editWritten(kind,id){if(kind==='tasks')openTask(id);else if(kind==='projects')openProject(id);else if(kind==='business'||kind==='development')openRecord(kind,id);else if(kind==='finance')openFinance(id);else if(kind==='review')openReview(id);else if(kind==='memo')openMemo(id);}
 function editRecordEvent(e){
-  if(e.target.closest('[data-check],[data-delete],[data-project-check],[data-record-check],textarea,input,select,[contenteditable="true"]'))return false;
+  if(e.target.closest('[data-check],[data-delete],[data-project-check],[data-record-check],[data-finance-advance],textarea,input,select,[contenteditable="true"]'))return false;
   const row=e.target.closest('[data-edit-kind]');if(!row)return false;editWritten(row.dataset.editKind,row.dataset.editId);return true;
 }
 for(const id of ['tasks','projects','business-records','development-records','finance-records','review-records','all-records','memo-records']){
@@ -398,10 +599,25 @@ $('setup-help').onclick=()=>$('help-dialog').showModal();$('developer-console').
 $('copy-callback').onclick=async()=>{try{if(native)await call('copy',{text:'http://127.0.0.1:41863/callback'});else await navigator.clipboard.writeText('http://127.0.0.1:41863/callback');toast('已复制回调地址');}catch{toast('请选中并复制回调地址');}};
 $('authorize').onclick=async()=>{if(!native){toast('请在 Mac 应用中连接飞书');return;}const id=$('app-id').value.trim(),secret=$('app-secret').value.trim();if(!id){$('auth-feedback').textContent='请先填写 App ID';return;}$('authorize').disabled=true;try{await call('authorize',{appId:id,secret});appId=id;$('app-secret').value='';$('auth-feedback').textContent='请在打开的浏览器中确认授权，完成后自动返回。';}catch(e){$('auth-feedback').textContent=e.message;}finally{$('authorize').disabled=false;}};
 $('disconnect').onclick=async()=>{try{await call('disconnect');syncGeneration++;connected=false;cache={};calendars=[];demo=false;state.showDemo=false;appId='';syncError='';state.hiddenCalendars=[];await call('saveCache',{cache});await schedule();save();render();renderSettings();toast('已断开飞书，本地记录已保留');}catch(e){toast(e.message);}};
-$('calendar-filters').onchange=e=>{const id=e.target.dataset.calendar;if(!id)return;if(e.target.checked)state.hiddenCalendars=state.hiddenCalendars.filter(x=>x!==id);else state.hiddenCalendars.push(id);save();renderCalendar();renderAgenda();schedule().catch(e=>toast(e.message));};
+$('calendar-filters').onchange=e=>{const id=e.target.dataset.calendar;if(!id)return;if(e.target.checked)state.hiddenCalendars=state.hiddenCalendars.filter(x=>x!==id);else state.hiddenCalendars.push(id);save();renderCalendar();schedule().catch(e=>toast(e.message));};
 for(const id of ['reflection-enabled','reflection-time','events-enabled'])$(id).onchange=notificationChange;
 $('reflection-prompt').onchange=()=>{state.prompt=$('reflection-prompt').value.trim()||defaultState.prompt;save();renderThought();schedule().catch(e=>toast(e.message));};
-$('export').onclick=async()=>{try{if(dirty)await persist();const data=JSON.stringify({exportedAt:new Date().toISOString(),tasks:state.tasks,projects:state.projects,business:state.business,development:state.development,finance:financeUnlocked?state.finance:[],memos:state.memos,thoughts:state.thoughts},null,2);if(native){const r=await call('export',{data,includeFinance:financeUnlocked});if(r.saved)toast(r.financeIncluded?'记录已导出（含财务）':'其他记录已导出；财务未包含');}else{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download='重新定义价值记录-'+C.key(new Date())+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500);}}catch(e){toast(e.message);}};
+$('export').onclick=async()=>{
+  if(exporting)return;exporting=true;$('export').disabled=true;
+  try{
+    if(dirty)await persist();
+    const calendarEvents=C.cachedEvents(cache);
+    if(native){
+      if(dirty)throw new Error('最新修改尚未保存，请重试后再导出全部内容。');
+      const result=await call('exportAll',{calendarEvents});
+      if(result.saved)toast('全部内容已导出（含财务和已同步日程）');
+    }else{
+      const data=JSON.stringify({...state,exportedAt:new Date().toISOString(),exportFormatVersion:1,financeIncluded:financeUnlocked,finance:financeUnlocked?state.finance:[],calendarCache:cache,calendarEvents},null,2);
+      const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'application/json'}));a.download='重新定义价值-浏览器预览数据-'+C.key(new Date())+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500);
+      toast(financeUnlocked?'预览数据已导出':'预览数据已导出；财务需在 Mac 应用中解锁导出');
+    }
+  }catch(e){toast(e.message);}finally{exporting=false;$('export').disabled=false;}
+};
 document.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='s'){e.preventDefault();persist();toast('记录已保存');}});
 function refreshDay(){
   const now=new Date(),day=C.key(now);if(day===currentDay)return false;
@@ -415,8 +631,11 @@ async function init(){
   document.body.classList.add(native?'native':'preview');
   try{if(native){const data=await call('bootstrap');state={...defaultState,...data.state};connected=data.connected;source=data.source||'api';cliInfo=data.cli||{};financeInfo=data.finance||financeInfo;state.finance=[];if(data.financeWarning)toast(data.financeWarning);if(data.archiveWarning)toast(data.archiveWarning);cache=data.cache||{};appId=data.appId||'';demo=!connected&&state.showDemo;if(data.firstRun){state.tasks=[{id:crypto.randomUUID(),title:'写下今天最重要的一件事',date:C.key(new Date()),done:false}];}await call('window',{mode:state.mode,locked:state.locked});}else{state={...defaultState,...JSON.parse(localStorage.getItem('zaichang-preview')||'{}')};demo=true;}}
   catch(e){toast(e.message);}
-  for(const kind of ['tasks','projects','business','development','finance','memos'])if(!Array.isArray(state[kind]))state[kind]=[];
+  for(const kind of ['tasks','projects','business','development','finance','memos','reviews'])if(!Array.isArray(state[kind]))state[kind]=[];
+  state.reviews=[...state.reviews];
   if(!state.thoughts||typeof state.thoughts!=='object'||Array.isArray(state.thoughts))state.thoughts={};
+  if(!state.reviewSubmitted||typeof state.reviewSubmitted!=='object'||Array.isArray(state.reviewSubmitted))state.reviewSubmitted={};
+  else state.reviewSubmitted={...state.reviewSubmitted};
   financeUnlocked=false;state.calendarExpanded=true;state.activeDimension='all';state.listStyle='long';
   render();$('save-status').textContent=native?'保存在这台 Mac':'保存在此浏览器';if(connected)await sync();
   refreshDay();scheduleDayChange();setInterval(()=>{refreshDay();if(connected)sync();else detectCLI();},60000);

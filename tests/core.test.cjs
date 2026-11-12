@@ -105,14 +105,34 @@ test('人民币金额精确转换为分，拒绝超精度、非数字、零、�
 
 test('财务三个待办阶段各自汇总，总营收只计已结算收入，排除支出与归档',()=>{
  const rows=[{type:'income',status:'pending',amountCents:10001},{type:'income',status:'pending',amountCents:99},{type:'income',status:'settled',amountCents:23456},{type:'income',status:'negotiating',amountCents:30000},{type:'income',status:'delivery',amountCents:40001},{type:'expense',status:'pending',amountCents:99999},{type:'expense',status:'settled',amountCents:99999},{type:'income',status:'settled',amountCents:99999,archived:true},{type:'income',status:'delivery',amountCents:-1},{type:'income',status:'delivery',amountCents:1.5}];
- assert.deepEqual(C.financeTotals(rows),{negotiating:30000,delivery:40001,pending:10100,revenue:23456});
- rows[0].status='settled';assert.deepEqual(C.financeTotals(rows),{negotiating:30000,delivery:40001,pending:99,revenue:33457});assert.deepEqual(C.financeTotals([]),{negotiating:0,delivery:0,pending:0,revenue:0});
+ assert.deepEqual(C.financeTotals(rows),{negotiating:30000,delivery:40001,pending:10100,forecast:103557,revenue:23456});
+ rows[0].status='settled';assert.deepEqual(C.financeTotals(rows),{negotiating:30000,delivery:40001,pending:99,forecast:103557,revenue:33457});assert.deepEqual(C.financeTotals([]),{negotiating:0,delivery:0,pending:0,forecast:0,revenue:0});
+});
+
+test('财务下一阶段逐步推进，兼容旧待结算，已结算及非活动收入不得推进',()=>{
+ const row={type:'income',status:'negotiating',amountCents:10001};
+ assert.equal(C.nextFinanceStatus(row),'delivery');row.status='delivery';assert.equal(C.nextFinanceStatus(row),'pending');row.status='pending';assert.equal(C.nextFinanceStatus(row),'settled');row.status='settled';assert.equal(C.nextFinanceStatus(row),null);
+ assert.equal(C.nextFinanceStatus({type:'income',amountCents:100}), 'settled');
+ for(const item of [null,{type:'expense',status:'pending'},{type:'income',status:'delivery',archived:true},{type:'income',status:'pending',deletedAt:123}])assert.equal(C.nextFinanceStatus(item),null);
+});
+
+test('财务阶段明细与汇总一致，全部保留支出，归档和最近删除独立且不改原数据',()=>{
+ const rows=[{id:'a',type:'income',status:'negotiating',amountCents:100},{id:'b',type:'income',status:'delivery',amountCents:200},{id:'c',type:'income',status:'pending',amountCents:300},{id:'legacy',type:'income',amountCents:1},{id:'d',type:'income',status:'settled',amountCents:400},{id:'expense',type:'expense',status:'settled',amountCents:500},{id:'archive',type:'income',status:'pending',amountCents:600,archived:true},{id:'deleted',type:'income',status:'settled',amountCents:700,deletedAt:123},{id:'archived-deleted',type:'income',status:'delivery',amountCents:800,archived:true,deletedAt:123}];
+ const before=structuredClone(rows),totals=C.financeTotals(rows);
+ for(const stage of ['negotiating','delivery','pending','forecast','revenue'])assert.equal(C.financeRecords(rows,stage).reduce((sum,r)=>sum+r.amountCents,0),totals[stage]);
+ assert.deepEqual(C.financeRecords(rows).map(r=>r.id),['a','b','c','legacy','d','expense']);assert.deepEqual(C.financeRecords(rows,'revenue').map(r=>r.id),['d']);assert.deepEqual(C.financeRecords(rows,'all','archived').map(r=>r.id),['archive']);assert.deepEqual(C.financeRecords(rows,'all','deleted').map(r=>r.id),['deleted','archived-deleted']);assert.deepEqual(rows,before);
+ assert.deepEqual(C.financeTotals(rows),{negotiating:100,delivery:200,pending:301,forecast:1001,revenue:400});assert.deepEqual(C.financeRecords(rows,'invalid'),[]);
 });
 
 
 test('一览保留原始标识和日期，排除归档和财务',()=>{
  const state={tasks:[{id:'same',title:'待办',date:'2026-10-26',done:true}],projects:[{id:'same',name:'项目',date:'2026-10-25'},{id:'archived',name:'旧',archived:true}],business:[{id:'b',title:'商务',date:'2026-10-24'}],development:[],finance:[{id:'private',title:'账目',amountCents:100}]};
  const feed=C.workFeed(state);assert.equal(feed.length,3);assert.deepEqual(C.timelineGroups(feed).map(g=>g.date),['2026-10-26','2026-10-25','2026-10-24']);assert.deepEqual(feed.filter(x=>x.id==='same').map(x=>x.kind),['tasks','projects']);assert.equal(feed[1].title,'项目');assert.equal(state.projects[0].title,undefined);assert.ok(!feed.some(x=>x.id==='private'));
+});
+
+test('复盘按记录身份合并旧文和同日多条新记录，不按日期去重或修改原件',()=>{
+ const state={thoughts:{'2026-11-08':'旧版当日原文'},reviewSubmitted:{'2026-11-08':100},reviews:[{id:'review-one',date:'2026-11-08',text:'第一条',updatedAt:200,submittedAt:200},{id:'review-two',date:'2026-11-08',text:'第二条',updatedAt:300},null,{id:'bad-date',date:'invalid',text:'不展示无效日期'},{id:'empty',date:'2026-11-08',text:'   '}]};
+ const before=structuredClone(state),entries=C.reviewEntries(state);assert.deepEqual(entries.map(r=>r.id),['2026-11-08','review-one','review-two']);assert.equal(entries[0].legacy,true);assert.equal(entries[1].legacy,false);assert.equal(C.workFeed(state).filter(r=>r.kind==='review').length,3);assert.deepEqual(C.timelineGroups(entries)[0].items.map(r=>r.id),['review-two','review-one','2026-11-08']);assert.deepEqual(state,before);
 });
 
 test('一览跨类型按日期从今天向后，过往记录统一置后且不修改原数据',()=>{
@@ -125,6 +145,17 @@ test('一览合并同日各类记录按实际时间排序，旧未完成工作�
  const state={tasks:[{id:'task',date:'2026-12-31',time:'10:00',done:false},{id:'carry',date:'2026-12-20',time:'08:00'}],projects:[{id:'project',name:'无时间项目',date:'2026-12-21'},{id:'done',date:'2026-12-20',status:'done',completedAt:new Date(2026,11,30,15).getTime()}],business:[{id:'business',date:'2026-12-22',status:'waiting'}],development:[{id:'early',date:'2026-12-31',startTime:'09:00'},{id:'same-time',date:'2026-12-31',startTime:'10:00'},{id:'future',date:'2027-01-01',startTime:'07:00'}],thoughts:{'2026-12-31':'今日复盘','2026-12-29':'历史复盘'},memos:[{id:'memo',date:'2026-12-31',text:'今日备忘'}]};
  const before=structuredClone(state),groups=C.overviewGroups(C.workFeed(state),new Date(2026,11,31));
  assert.deepEqual(groups[0].items.map(r=>r.id),['carry','early','task','same-time','project','business','2026-12-31','memo']);assert.equal(groups[1].date,'2027-01-01');assert.deepEqual(groups.filter(g=>g.history).map(g=>g.date),['2026-12-30','2026-12-29']);assert.deepEqual(state,before);
+});
+
+test('四类工作统一完成置底，保留组内顺序、历史笔记、旧完成状态且不修改原数据',()=>{
+ const groups=[
+  {date:'2026-11-06',history:false,items:[{id:'done-task',kind:'tasks',done:true},{id:'active-task',kind:'tasks',done:false},{id:'legacy-project',kind:'projects',progress:100},{id:'review',kind:'review',done:true}]},
+  {date:'2026-11-07',history:false,items:[{id:'active-business',kind:'business',status:'waiting'},{id:'done-dev',kind:'development',status:'done'}]},
+  {date:'2026-10-01',history:true,items:[{id:'done-business',kind:'business',status:'done'},{id:'memo',kind:'memo',status:'done'}]}];
+ const before=structuredClone(groups),ordered=C.completedLast(groups);
+ assert.deepEqual(ordered.map(g=>g.items.map(r=>r.id)),[['active-task','review'],['active-business'],['memo'],['done-dev'],['done-task','legacy-project'],['done-business']]);
+ assert.equal(ordered[2].history,true);assert.ok(ordered.slice(3).every(g=>g.completed&&!g.history));assert.deepEqual(groups,before);
+ assert.deepEqual(C.completedLast([]),[]);const explicit=C.completedLast([{date:'',items:[{id:'legacy',progress:'100'},{id:'current',progress:30}]}],'projects');assert.deepEqual(explicit.map(g=>g.items[0].id),['current','legacy']);
 });
 
 test('待办从今天起跨年正序，同日按时间排序，旧未完成顺延但不改原始日期',()=>{

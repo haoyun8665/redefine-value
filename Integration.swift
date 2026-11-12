@@ -96,7 +96,7 @@ private final class CLICapture:@unchecked Sendable {
 
 struct ReflectionArchive {
     let root:URL
-    func save(_ thoughts:[String:Any])throws {
+    func save(_ thoughts:[String:Any],reviews:[[String:Any]]=[] )throws {
         let folder=root.appendingPathComponent("reflections",isDirectory:true)
         try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
         for (date,value) in thoughts {
@@ -107,6 +107,20 @@ struct ReflectionArchive {
             let bytes=Data(("# "+date+" · 每日复盘\n\n"+text+"\n").utf8)
             if (try? Data(contentsOf:url)) != bytes{try bytes.write(to:url,options:.atomic)}
             try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:url.path)
+        }
+        if !reviews.isEmpty {
+            let entries=folder.appendingPathComponent("entries",isDirectory:true)
+            try FileManager.default.createDirectory(at:entries,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+            for record in reviews {
+                guard let id=record["id"] as? String,id.range(of:"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$",options:.regularExpression) != nil,
+                      let date=record["date"] as? String,date.range(of:"^\\d{4}-\\d{2}-\\d{2}$",options:.regularExpression) != nil,
+                      let text=record["text"] as? String else{continue}
+                let url=entries.appendingPathComponent(id+".md")
+                if text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && !FileManager.default.fileExists(atPath:url.path){continue}
+                let bytes=Data(("# "+date+" · 每日复盘\n\n"+text+"\n").utf8)
+                if (try? Data(contentsOf:url)) != bytes{try bytes.write(to:url,options:.atomic)}
+                try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:url.path)
+            }
         }
     }
 }

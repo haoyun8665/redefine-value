@@ -15,10 +15,10 @@ fi
 mkdir -p .build
 task_temporary="$(mktemp -d "$task_root/.build/tests.XXXXXX")"
 trap 'rm -rf "$task_temporary"' EXIT
-task_sources=(Native.swift Integration.swift FinanceVault.swift)
+task_sources=(Native.swift Integration.swift FinanceVault.swift Export.swift)
 task_frameworks=(-framework AppKit -framework WebKit -framework Security -framework CryptoKit -framework Network -framework UserNotifications)
-for task_suite in IntegrationTests MockTests FinanceVaultTests; do
+for task_suite in IntegrationTests MockTests FinanceVaultTests ExportTests; do
   echo "Running $task_suite"
-  swiftc -parse-as-library -D TESTING -swift-version 5 "${task_sources[@]}" "tests/$task_suite.swift" -o "$task_temporary/$task_suite" "${task_frameworks[@]}"
+  swiftc -parse-as-library -D TESTING -swift-version 5 -module-cache-path "$task_temporary/module-cache" "${task_sources[@]}" "tests/$task_suite.swift" -o "$task_temporary/$task_suite" "${task_frameworks[@]}"
   "$task_temporary/$task_suite"
 done

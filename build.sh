@@ -19,7 +19,7 @@ task_executables=()
 for task_arch in "${task_archs[@]}"; do
   print "Building $task_arch"
   task_executable="$task_temporary/Redefine-$task_arch"
-  swiftc -parse-as-library -swift-version 5 -O -sdk "$task_sdk" -target "$task_arch-apple-macosx13.0" "$task_root/Native.swift" "$task_root/Integration.swift" "$task_root/FinanceVault.swift" -o "$task_executable" "${task_frameworks[@]}"
+  swiftc -parse-as-library -swift-version 5 -O -module-cache-path "$task_temporary/module-cache" -sdk "$task_sdk" -target "$task_arch-apple-macosx13.0" "$task_root/Native.swift" "$task_root/Integration.swift" "$task_root/FinanceVault.swift" "$task_root/Export.swift" -o "$task_executable" "${task_frameworks[@]}"
   task_executables+=("$task_executable")
 done
 lipo -create "${task_executables[@]}" -output "$task_bundle/Contents/MacOS/Redefine"
@@ -36,7 +36,7 @@ cat > "$task_bundle/Contents/Info.plist" <<PLIST
 <key>CFBundleIconFile</key><string>AppIcon.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$task_version</string>
-<key>CFBundleVersion</key><string>37</string>
+<key>CFBundleVersion</key><string>53</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>

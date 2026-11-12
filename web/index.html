@@ -14,7 +14,7 @@
     <div class="tools">
       <button class="icon" id="lock" title="锁定位置" aria-label="锁定位置"></button>
       <button class="icon" id="settings" title="设置" aria-label="设置"></button>
-      <button class="icon" id="hide" title="收起到菜单栏" aria-label="收起到菜单栏"></button>
+      <button class="icon" id="hide" title="最小化，Dock 图标保留" aria-label="最小化"></button>
     </div>
   </header>
   <section class="calendar-section" aria-label="月历">
@@ -22,7 +22,7 @@
     <div class="weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
     <div id="calendar" class="calendar" role="group" aria-label="选择日期"></div>
     <div class="sync-line"><button id="connection" class="connection"></button><button id="refresh" class="icon" title="立即同步" aria-label="立即同步"></button></div>
-    <section class="feishu-agenda" id="feishu-agenda" aria-labelledby="feishu-agenda-toggle"><button id="feishu-agenda-toggle" class="feishu-agenda-toggle" aria-expanded="false" aria-controls="agenda"><span id="agenda-title">飞书日程</span><span id="event-count" class="muted"></span></button><div id="agenda" class="agenda" role="feed" aria-label="飞书日程时间线" tabindex="0" hidden></div></section>
+    <section class="feishu-agenda" id="feishu-agenda" aria-labelledby="feishu-agenda-toggle"><button id="feishu-agenda-toggle" class="feishu-agenda-toggle" aria-expanded="false" aria-controls="agenda"><span id="agenda-title">日程明细</span><span id="event-count" class="muted"></span></button><div id="agenda" class="agenda" role="feed" aria-label="所选日期日程明细" tabindex="0" hidden></div></section>
   </section>
   <section class="time-management" id="time-management" aria-labelledby="time-management-toggle">
   <div class="time-management-header"><button id="time-management-toggle" class="time-management-toggle" aria-label="时间管理" aria-expanded="true" aria-controls="time-management-content">时间管理</button><span id="save-status" aria-live="polite">保存在这台 Mac</span></div>
@@ -44,7 +44,7 @@
     <div id="all-records" class="timeline" role="feed" aria-label="工作一览记录" tabindex="0"></div>
   </section>
   <section class="focus-section dimension-panel" id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks" hidden>
-    <div class="section-heading"><div class="heading-label"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="3"/><path d="m6 10 3 3 5-6"/></svg><h2 id="focus-title">待办</h2></div><span id="task-progress" class="muted"></span></div>
+    <div class="section-heading"><div class="heading-label"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="3"/><path d="m6 10 3 3 5-6"/></svg><h2 id="focus-title">待办</h2></div><div class="project-tools"><span id="task-progress" class="muted"></span><button id="new-task" class="quiet-button task-add-button" aria-label="新增待办" title="新增待办，可填写日期和时间">＋ 新增待办</button></div></div>
     <div id="tasks" class="timeline" role="feed" aria-label="待办累计记录" tabindex="0"></div>
     <form id="add-task" class="add-task"><span aria-hidden="true">＋</span><input id="task-input" maxlength="150" placeholder="记下今天的待办…" aria-label="新增待办" autocomplete="off"><input id="task-input-time" type="time" aria-label="待办时间（选填）" title="待办时间（选填）"><button class="add-submit" type="submit">添加</button></form>
   </section>
@@ -61,22 +61,23 @@
     <p id="development-summary" class="module-summary"></p><div id="development-records" class="timeline" role="feed" tabindex="0"></div>
   </section>
   <section class="thought-section dimension-panel" id="panel-review" role="tabpanel" aria-labelledby="tab-review" hidden>
-    <div class="section-heading"><div class="heading-label"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 7 8-7 8-7-8 7-8Zm0 0v16M3 10h14"/></svg><h2 id="thought-title">每日复盘</h2></div><div class="thought-tools"><button id="write-review" class="quiet-button">＋ 补写</button><button id="thought-history" class="quiet-button">搜索</button><button id="thought-reminder" class="reminder-button"></button></div></div>
+    <div class="section-heading"><div class="heading-label"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 7 8-7 8-7-8 7-8Zm0 0v16M3 10h14"/></svg><h2 id="thought-title">每日复盘</h2></div><div class="thought-tools"><button id="add-review" class="quiet-button review-submit-button" aria-label="新增复盘">＋ 新增</button><button id="write-review" class="quiet-button">补写</button><button id="thought-history" class="quiet-button">搜索</button><button id="thought-reminder" class="reminder-button"></button></div></div>
+    <p id="review-feedback" class="feedback" role="status" hidden></p>
     <div id="review-records" class="timeline review-timeline" role="feed" aria-label="复盘累计记录" tabindex="0"></div>
 
   </section>
   <section class="records-section dimension-panel" id="panel-finance" role="tabpanel" aria-labelledby="tab-finance" hidden>
     <div id="finance-gate" class="finance-gate"><span class="gate-mark" aria-hidden="true">◇</span><h2>财务已锁定</h2><p id="finance-gate-note">输入密码后查看账目与金额汇总。</p><button id="finance-unlock" class="primary-button">解锁财务</button><p id="finance-gate-feedback" class="feedback" role="status"></p></div>
     <div id="finance-content" class="finance-content" hidden>
-    <div class="section-heading finance-title-row"><div class="heading-label"><h2>财务</h2><button id="finance-lock-now" class="quiet-button" aria-label="锁定财务">锁定</button></div><dl class="finance-totals" aria-label="财务金额汇总" title="全部未归档收入，单位：元；总营收为已结算收入合计"><div><dt>待接洽：</dt><dd id="finance-negotiating">0.00</dd></div><div><dt>待交付：</dt><dd id="finance-delivery">0.00</dd></div><div><dt>待结算：</dt><dd id="finance-pending">0.00</dd></div><div><dt>总营收：</dt><dd id="finance-revenue">0.00</dd></div></dl></div>
-    <div class="finance-list-tools"><p id="finance-summary" class="module-summary"></p><div class="project-tools"><button id="finance-archived" class="quiet-button" hidden></button><button id="add-finance" class="quiet-button">＋ 记一笔</button></div></div><div id="finance-records" class="timeline" role="feed" aria-label="财务累计记录" tabindex="0"></div></div>
+    <div class="section-heading finance-title-row"><div class="heading-label"><h2>财务</h2><button id="finance-lock-now" class="quiet-button" aria-label="锁定财务">锁定</button></div><div class="finance-totals" role="group" aria-label="按财务阶段查看明细" title="点击金额查看明细；预估营收为所有阶段收入之和，实际营收只计已结算；排除支出、归档和已删除账目，单位：元"><button id="finance-stage-negotiating" type="button" aria-pressed="false"><span>待接洽：</span><strong id="finance-negotiating">0.00</strong></button><button id="finance-stage-delivery" type="button" aria-pressed="false"><span>待交付：</span><strong id="finance-delivery">0.00</strong></button><button id="finance-stage-pending" type="button" aria-pressed="false"><span>待结算：</span><strong id="finance-pending">0.00</strong></button><button id="finance-stage-forecast" type="button" aria-pressed="false"><span>预估营收：</span><strong id="finance-forecast">0.00</strong></button><button id="finance-stage-revenue" type="button" aria-pressed="false"><span>实际营收：</span><strong id="finance-revenue">0.00</strong></button></div></div>
+    <div class="finance-list-tools"><p id="finance-summary" class="module-summary" aria-live="polite"></p><div class="project-tools"><button id="finance-all" class="quiet-button" aria-pressed="true">全部</button><button id="finance-archived" class="quiet-button" hidden></button><button id="finance-deleted" class="quiet-button" hidden></button><button id="add-finance" class="quiet-button">＋ 记一笔</button></div></div><div id="finance-records" class="timeline" role="feed" aria-label="财务累计记录" tabindex="0"></div></div>
   </section>
   <section class="records-section dimension-panel" id="panel-memo" role="tabpanel" aria-labelledby="tab-memo" hidden>
     <div class="section-heading"><div class="heading-label"><h2>备忘</h2></div><div class="project-tools"><button id="memo-archived" class="quiet-button" hidden></button><button id="add-memo" class="quiet-button">＋ 新增</button></div></div>
     <p id="memo-summary" class="module-summary"></p><div id="memo-records" class="timeline" role="feed" aria-label="备忘累计记录" tabindex="0"></div>
   </section>
   </div>
-  <footer class="bottom-line"><span class="status-dot"></span><span id="window-status">贴在桌面，留在心上。</span><button id="export" class="quiet-button">导出记录</button></footer>
+  <footer class="bottom-line"><span class="status-dot"></span><span id="window-status">贴在桌面，留在心上。</span><button id="export" class="quiet-button" title="导出所有模块、归档和已同步日程；财务需密码验证">导出全部</button></footer>
   </div>
   </section>
 </main>
@@ -133,19 +134,21 @@
 <dialog id="finance-dialog" aria-labelledby="finance-dialog-title">
   <div class="dialog-header"><h2 id="finance-dialog-title">记一笔</h2><button class="icon close-dialog" aria-label="关闭财务记录">×</button></div>
   <form id="finance-form" class="dialog-content project-form" aria-label="财务记录编辑">
+    <fieldset id="finance-fields">
     <label class="field-label">事项<input id="finance-title" maxlength="160" required autocomplete="off"></label>
     <div class="project-field-row"><label class="field-label">收支<select id="finance-type"><option value="income">收入</option><option value="expense">支出</option></select></label><label class="field-label">金额（元）<input id="finance-amount" type="text" inputmode="decimal" placeholder="0.00" maxlength="13" required></label></div>
-    <div class="project-field-row"><label class="field-label">记录日期<input id="finance-date" type="date" required></label><label class="field-label"><span id="finance-status-label">财务阶段</span><select id="finance-status" aria-describedby="finance-stage-note"><option value="negotiating">待接洽</option><option value="delivery">待交付</option><option value="pending">待结算</option><option value="settled">已结算（总营收）</option></select></label></div>
-    <p id="finance-stage-note" class="finance-stage-note">已结算收入计入总营收。</p>
+    <div class="project-field-row"><label class="field-label">记录日期<input id="finance-date" type="date" required></label><label class="field-label"><span id="finance-status-label">财务阶段</span><select id="finance-status" aria-describedby="finance-stage-note"><option value="negotiating">待接洽</option><option value="delivery">待交付</option><option value="pending">待结算</option><option value="settled">已结算（实际营收）</option></select></label></div>
+    <p id="finance-stage-note" class="finance-stage-note">所有收入阶段计入预估营收，已结算收入计入实际营收。</p>
     <label class="field-label">往来方<input id="finance-party" maxlength="160" autocomplete="off"></label>
     <label class="field-label">备注<textarea id="finance-notes" maxlength="3000"></textarea></label>
+    </fieldset>
     <p id="finance-feedback" class="feedback" role="status"></p>
-    <div class="button-row"><button type="submit" class="primary-button">保存账目</button><button type="button" id="archive-finance" class="quiet-button" hidden>归档账目</button></div>
+    <div class="button-row"><button id="save-finance" type="submit" class="primary-button">保存账目</button><button type="button" id="archive-finance" class="quiet-button" hidden>归档账目</button><button type="button" id="delete-finance" class="quiet-button danger" hidden>删除账目</button></div>
   </form>
 </dialog>
 <dialog id="review-dialog" aria-labelledby="review-dialog-title">
   <div class="dialog-header"><h2 id="review-dialog-title">补写 / 编辑复盘</h2><button class="icon close-dialog" aria-label="关闭复盘编辑">×</button></div>
-  <div class="dialog-content project-form"><label class="field-label">复盘日期<input id="review-date" type="date" required></label><label class="field-label">复盘内容<textarea id="review-edit" maxlength="20000" aria-label="编辑历史复盘" placeholder="记录这一天的进展和思考。"></textarea></label><p class="hint" id="review-save-status">自动保存 · 按日归档</p></div>
+  <div class="dialog-content project-form"><label class="field-label">复盘日期<input id="review-date" type="date" required></label><label class="field-label">复盘内容<textarea id="review-edit" maxlength="20000" aria-label="编辑历史复盘" placeholder="记录这一天的进展和思考。"></textarea></label><p class="hint" id="review-save-status" role="status">草稿自动保存 · 写好后提交</p><button type="button" id="submit-review" class="primary-button">提交复盘</button></div>
 </dialog>
 <dialog id="history-dialog" role="dialog" aria-modal="true" aria-labelledby="history-title">
   <div class="dialog-header"><h2 id="history-title">复盘档案</h2><button class="icon close-dialog" aria-label="关闭复盘档案">×</button></div>

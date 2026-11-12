@@ -16,6 +16,11 @@ final class FinanceVault {
     private var retryAfter=Date.distantPast
     var isUnlocked:Bool {sessionKey != nil && rows != nil}
     var configured:Bool {envelope?.mode == "password"}
+    func hasPendingRecords()throws->Bool {
+        guard let e=envelope,e.mode=="pending" else{return false}
+        guard let raw=readPending(),raw.count==32 else{throw Failure("本机财务迁移密钥不可用。")}
+        return try !decoded(e,SymmetricKey(data:raw)).isEmpty
+    }
     init(root:URL,readPending:@escaping()->Data?={FinancePendingKey.read()},writePending:@escaping(Data?)throws->Void={try FinancePendingKey.write($0)}) {
         self.root=root;self.readPending=readPending;self.writePending=writePending
     }
@@ -84,6 +89,28 @@ final class FinanceVault {
         let next=try JSONSerialization.data(withJSONObject:list,options:.sortedKeys)
         if let rows=rows,try JSONSerialization.data(withJSONObject:rows,options:.sortedKeys)==next{return}
         e.box=try sealed(list,key);try write(e);rows=list
+    }
+    func setDeleted(id:String,deleted:Bool,at:Date=Date())throws->[[String:Any]] {
+        var list=try records()
+        let matches=list.indices.filter{list[$0]["id"] as? String==id}
+        guard !id.isEmpty,matches.count==1,let index=matches.first else{throw Failure("未找到唯一对应的账目，未更改记录。")}
+        if deleted{list[index]["deletedAt"]=at.timeIntervalSince1970*1000}else{list[index].removeValue(forKey:"deletedAt")}
+        list[index]["updatedAt"]=at.timeIntervalSince1970*1000
+        try save(list)
+        return list
+    }
+    func advance(id:String,from:String,at:Date=Date())throws->[[String:Any]] {
+        var list=try records()
+        let matches=list.indices.filter{list[$0]["id"] as? String==id}
+        guard !id.isEmpty,matches.count==1,let index=matches.first else{throw Failure("未找到唯一对应的账目，未更改记录。")}
+        let record=list[index]
+        guard record["type"] as? String=="income",record["archived"] as? Bool != true,((record["deletedAt"] as? NSNumber)?.doubleValue ?? 0)==0 else{throw Failure("此账目不能推进阶段。")}
+        let status=record["status"] as? String ?? "pending",current=["negotiating","delivery","settled"].contains(status) ? status:"pending"
+        let steps=["negotiating":"delivery","delivery":"pending","pending":"settled"]
+        guard current==from,let next=steps[current] else{throw Failure("账目阶段已变化或已结算，请查看当前明细。")}
+        list[index]["status"]=next;list[index]["updatedAt"]=at.timeIntervalSince1970*1000
+        try save(list)
+        return list
     }
     func lock(){sessionKey=nil;rows=nil}
 }

@@ -16,6 +16,18 @@ import Foundation
         try archive.save(["2026-10-26":""])
         let cleared=try String(contentsOf:file,encoding:.utf8);precondition(!cleared.contains("修改后的复盘"))
         print("通过：逐日归档、中文换行、覆盖编辑、清空一致性、私有权限、路径校验")
+        var reviews:[[String:Any]]=[["id":"review-one","date":"2026-10-26","text":"同日第一条\n第二行"],["id":"review-two","date":"2026-10-26","text":"同日第二条"]]
+        try archive.save(["2026-10-26":"旧版复盘原文"],reviews:reviews)
+        let legacyData=try Data(contentsOf:file),firstEntry=folder.appendingPathComponent("reflections/entries/review-one.md"),secondEntry=folder.appendingPathComponent("reflections/entries/review-two.md")
+        let secondData=try Data(contentsOf:secondEntry);reviews[0]["text"]="第一条修改";reviews[0]["date"]="2026-10-25"
+        try archive.save([:],reviews:reviews)
+        let preservedLegacy=try Data(contentsOf:file),preservedSecond=try Data(contentsOf:secondEntry),modifiedFirst=try String(contentsOf:firstEntry,encoding:.utf8)
+        precondition(legacyData==preservedLegacy && secondData==preservedSecond && modifiedFirst.contains("第一条修改") && modifiedFirst.contains("2026-10-25"))
+        let entryFiles=try FileManager.default.contentsOfDirectory(atPath:folder.appendingPathComponent("reflections/entries").path);precondition(entryFiles.count==2)
+        let entryMode=try FileManager.default.attributesOfItem(atPath:firstEntry.path)[.posixPermissions] as! NSNumber;precondition(entryMode.intValue==0o600)
+        try archive.save([:],reviews:[["id":"../../escape","date":"2026-10-26","text":"不得越界"]])
+        precondition(!FileManager.default.fileExists(atPath:folder.appendingPathComponent("escape.md").path))
+        print("通过：同日多条独立归档、修改本条不覆盖其他新旧复盘、改日期不重复建档、路径及权限保护")
         let success=Data(#"{"ok":true,"identity":"user","data":{"items":[]}}"#.utf8)
         let data=try LarkCLI.decode(stdout:success,stderr:Data(),status:0)
         precondition(data["items"] as? [String] == [])

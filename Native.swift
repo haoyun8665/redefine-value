@@ -172,6 +172,7 @@ final class DragHandle:NSView {
     let storeURL:URL
     init(storeURL:URL?=nil){self.storeURL=storeURL ?? FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask).first!.appendingPathComponent("在场",isDirectory:true);super.init()}
     var state:[String:Any]=[:],cache:[String:Any]=[:]
+    var terminationPending=false
     lazy var financeVault=FinanceVault(root:storeURL)
     var financeStorageReady=false,financePromptBusy=false,financeWarning=""
     var financeObservers:[NSObjectProtocol]=[]
@@ -185,11 +186,18 @@ final class DragHandle:NSView {
         if financeVault.isUnlocked,let list=object["finance"] as? [[String:Any]]{try financeVault.save(list)}
         var publicState=object;publicState.removeValue(forKey:"finance")
         try write("state.json",publicState);state=publicState
-        do{try ReflectionArchive(root:storeURL).save(object["thoughts"] as? [String:Any] ?? [:])}catch{throw Failure("主记录已保存，但独立复盘归档失败。请检查本机剩余空间。") }
+        do{try ReflectionArchive(root:storeURL).save(object["thoughts"] as? [String:Any] ?? [:],reviews:object["reviews"] as? [[String:Any]] ?? [])}catch{throw Failure("主记录已保存，但独立复盘归档失败。请检查本机剩余空间。") }
     }
     func financeInfo()->[String:Any]{["configured":financeVault.configured,"locked":!financeVault.isUnlocked,"available":financeStorageReady]}
     func publicState()->[String:Any]{var safe=state;safe.removeValue(forKey:"finance");return safe}
     func exportSnapshot(includeFinance:Bool=true)throws->[String:Any]{let included=includeFinance && financeVault.isUnlocked;var exported=publicState();exported["exportedAt"]=ISO8601DateFormatter().string(from:Date());exported["financeIncluded"]=included;exported["finance"]=included ? try financeVault.records():[];return exported}
+    func exportAllSnapshot(calendarEvents:[[String:Any]])throws->[String:Any] {
+        guard financeStorageReady else{throw Failure("财务存储尚未准备好，未导出不完整的备份。")}
+        if !financeVault.isUnlocked{guard !financeVault.configured,try !financeVault.hasPendingRecords() else{throw Failure("请先解锁财务，再导出全部内容。")}}
+        var snapshot=try exportSnapshot();snapshot["financeIncluded"]=true;snapshot["calendarCache"]=cache;snapshot["calendarEvents"]=calendarEvents;snapshot["exportFormatVersion"]=1
+        snapshot["appVersion"]=Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "development"
+        return snapshot
+    }
     func lockFinance(){financeVault.lock();event("financeLocked",financeInfo())}
     @objc func sleepFinance(){lockFinance()}
     func promptFinance(change:Bool=false)throws->Bool {
@@ -220,7 +228,7 @@ final class DragHandle:NSView {
         return info
     }
     func applicationDidFinishLaunching(_ notification:Notification){
-        NSApp.setActivationPolicy(.accessory);state=read("state.json");cache=read("calendar-cache.json")
+        NSApp.setActivationPolicy(.regular);state=read("state.json");cache=read("calendar-cache.json")
         if let iconURL=Bundle.main.url(forResource:"AppIcon",withExtension:"icns"),let icon=NSImage(contentsOf:iconURL){NSApp.applicationIconImage=icon}
         do{try financeVault.prepare(legacy:state["finance"] as? [[String:Any]] ?? []);var clean=state;clean.removeValue(forKey:"finance");try write("state.json",clean);state=clean;financeStorageReady=true}catch{financeWarning=error.localizedDescription}
         financeObservers.append(NSWorkspace.shared.notificationCenter.addObserver(forName:NSWorkspace.willSleepNotification,object:nil,queue:.main){[weak self] _ in Task{@MainActor in self?.lockFinance()}})
@@ -241,10 +249,13 @@ final class DragHandle:NSView {
         configureWindow(mode:state["mode"] as? String ?? "desktop",locked:state["locked"] as? Bool ?? false)
         status=NSStatusBar.system.statusItem(withLength:NSStatusItem.squareLength)
         status.button?.image=NSImage(systemSymbolName:"calendar.badge.clock",accessibilityDescription:"重新定义价值")
-        let menu=NSMenu();menu.addItem(withTitle:"显示重新定义价值",action:#selector(showWindow),keyEquivalent:"");menu.addItem(withTitle:"调整便签位置",action:#selector(repositionWindow),keyEquivalent:"");menu.addItem(withTitle:"收起",action:#selector(hideWindow),keyEquivalent:"");menu.addItem(.separator());menu.addItem(withTitle:"退出重新定义价值",action:#selector(quit),keyEquivalent:"q");for item in menu.items{item.target=self};status.menu=menu
+        let menu=NSMenu();menu.addItem(withTitle:"显示重新定义价值",action:#selector(showWindow),keyEquivalent:"");menu.addItem(withTitle:"调整便签位置",action:#selector(repositionWindow),keyEquivalent:"");menu.addItem(withTitle:"最小化",action:#selector(minimizeWindow),keyEquivalent:"");menu.addItem(.separator());menu.addItem(withTitle:"退出重新定义价值",action:#selector(quit),keyEquivalent:"q");for item in menu.items{item.target=self};status.menu=menu
         let mainMenu=NSMenu(),appMenu=NSMenu(),appItem=NSMenuItem();appItem.submenu=appMenu;appMenu.addItem(withTitle:"退出重新定义价值",action:#selector(quit),keyEquivalent:"q");appMenu.items.first?.target=self;mainMenu.addItem(appItem)
         let edit=NSMenu(title:"编辑"),editItem=NSMenuItem(title:"编辑",action:nil,keyEquivalent:"");editItem.submenu=edit
-        for (name,selector,key) in [("撤销","undo:","z"),("剪切","cut:","x"),("复制","copy:","c"),("粘贴","paste:","v"),("全选","selectAll:","a")]{edit.addItem(withTitle:name,action:NSSelectorFromString(selector),keyEquivalent:key)};mainMenu.addItem(editItem);NSApp.mainMenu=mainMenu
+        for (name,selector,key) in [("撤销","undo:","z"),("剪切","cut:","x"),("复制","copy:","c"),("粘贴","paste:","v"),("全选","selectAll:","a")]{edit.addItem(withTitle:name,action:NSSelectorFromString(selector),keyEquivalent:key)};mainMenu.addItem(editItem)
+        let windowMenu=NSMenu(title:"窗口"),windowItem=NSMenuItem(title:"窗口",action:nil,keyEquivalent:"");windowItem.submenu=windowMenu
+        let minimizeItem=windowMenu.addItem(withTitle:"最小化",action:#selector(minimizeWindow),keyEquivalent:"m");minimizeItem.target=self
+        mainMenu.addItem(windowItem);NSApp.mainMenu=mainMenu
         guard let root=Bundle.main.resourceURL?.appendingPathComponent("web"),FileManager.default.fileExists(atPath:root.appendingPathComponent("index.html").path) else{NSApp.terminate(nil);return}
         web.loadFileURL(root.appendingPathComponent("index.html"),allowingReadAccessTo:root);window.orderFrontRegardless()
     }
@@ -262,14 +273,27 @@ final class DragHandle:NSView {
         switch mode{case "top":window.level = .floating;case "normal":window.level = .normal;default:window.level=locked ? NSWindow.Level(rawValue:NSWindow.Level.normal.rawValue-1) : .normal}
         if mode == "desktop" && !locked{window.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true)}
     }
-    @objc func showWindow(){window.orderFrontRegardless();NSApp.activate(ignoringOtherApps:true)}
+    @objc func showWindow(){
+        NSApp.setActivationPolicy(.regular);NSApp.unhide(nil)
+        if window.isMiniaturized{window.deminiaturize(nil)}
+        window.makeKeyAndOrderFront(nil);window.orderFrontRegardless();NSApp.activate(ignoringOtherApps:true)
+    }
     @objc func repositionWindow(){web.evaluateJavaScript("state.locked=false; applyWindow()",completionHandler:nil)}
-    @objc func hideWindow(){web.evaluateJavaScript("void window.lockFinancialView()",completionHandler:nil);window.orderOut(nil)}
-    @objc func quit(){web.evaluateJavaScript("JSON.stringify(state)") {[weak self] result,_ in
-        if let text=result as? String,let data=text.data(using:.utf8),let object=try? JSONSerialization.jsonObject(with:data) as? [String:Any]{try? self?.saveState(object)}
-        self?.window.orderOut(nil);NSApp.terminate(nil)
-    }}
-    func windowShouldClose(_ sender:NSWindow)->Bool {hideWindow();return false}
+    @objc func minimizeWindow(){window.miniaturize(nil)}
+    func windowWillMiniaturize(_ notification:Notification){lockFinance()}
+    @objc func quit(){NSApp.terminate(nil)}
+    func applicationShouldTerminate(_ sender:NSApplication)->NSApplication.TerminateReply {
+        guard !terminationPending else{return .terminateLater}
+        guard let web=web else{sender.setActivationPolicy(.accessory);return .terminateNow}
+        terminationPending=true
+        web.evaluateJavaScript("JSON.stringify(state)") {[weak self] result,_ in
+            if let text=result as? String,let data=text.data(using:.utf8),let object=try? JSONSerialization.jsonObject(with:data) as? [String:Any]{try? self?.saveState(object)}
+            self?.window.orderOut(nil);sender.setActivationPolicy(.accessory)
+            sender.reply(toApplicationShouldTerminate:true)
+        }
+        return .terminateLater
+    }
+    func windowShouldClose(_ sender:NSWindow)->Bool {lockFinance();sender.orderOut(nil);return false}
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication)->Bool {false}
     func applicationShouldHandleReopen(_ sender:NSApplication,hasVisibleWindows flag:Bool)->Bool {showWindow();return true}
     func userContentController(_ userContentController:WKUserContentController,didReceive message:WKScriptMessage){
@@ -286,13 +310,19 @@ final class DragHandle:NSView {
         switch action {
         case "bootstrap":
             let cliInfo=await refreshCLI();var archiveWarning=""
-            do{try ReflectionArchive(root:storeURL).save(state["thoughts"] as? [String:Any] ?? [:])}catch{archiveWarning="复盘独立归档暂时失败，主记录已保留。请检查本机存储空间。"}
+            do{try ReflectionArchive(root:storeURL).save(state["thoughts"] as? [String:Any] ?? [:],reviews:state["reviews"] as? [[String:Any]] ?? [])}catch{archiveWarning="复盘独立归档暂时失败，主记录已保留。请检查本机存储空间。"}
             let safeState=publicState()
             return ["state":safeState,"finance":financeInfo(),"financeWarning":financeWarning,"cache":cache,"connected":feishu.connected,"source":feishu.cli != nil ? "cli":"api","cli":cliInfo,"archiveWarning":archiveWarning,"appId":feishu.credential?.appId ?? "","firstRun":state.isEmpty]
         case "financeUnlock":
             guard try promptFinance() else{return ["unlocked":false,"info":financeInfo()]}
             return ["unlocked":true,"records":try financeVault.records(),"info":financeInfo()]
         case "financeLock":lockFinance();return financeInfo()
+        case "financeDelete":
+            guard financeStorageReady,let id=p["id"] as? String,let deleted=p["deleted"] as? Bool else{throw Failure("财务记录参数无效。")}
+            return ["records":try financeVault.setDeleted(id:id,deleted:deleted)]
+        case "financeAdvance":
+            guard financeStorageReady,let id=p["id"] as? String,let from=p["from"] as? String else{throw Failure("财务阶段参数无效。")}
+            return ["records":try financeVault.advance(id:id,from:from)]
         case "financePassword":
             let changed=try promptFinance(change:true);lockFinance();return ["changed":changed,"info":financeInfo()]
         case "cliStatus":
@@ -317,12 +347,12 @@ final class DragHandle:NSView {
             }
             return ["ready":false]
         case "openArchive":
-            try ReflectionArchive(root:storeURL).save(state["thoughts"] as? [String:Any] ?? [:]);NSWorkspace.shared.open(storeURL.appendingPathComponent("reflections",isDirectory:true));return true
+            try ReflectionArchive(root:storeURL).save(state["thoughts"] as? [String:Any] ?? [:],reviews:state["reviews"] as? [[String:Any]] ?? []);NSWorkspace.shared.open(storeURL.appendingPathComponent("reflections",isDirectory:true));return true
         case "saveState":guard let s=p["state"] as? [String:Any] else{throw Failure("记录格式错误。")};try saveState(s);return true
         case "saveCache":guard let c=p["cache"] as? [String:Any] else{throw Failure("日历缓存格式错误。")};try write("calendar-cache.json",c);cache=c;return true
         case "window":configureWindow(mode:p["mode"] as? String ?? "desktop",locked:p["locked"] as? Bool ?? false);return true
         case "drag":if window.isMovable,let e=NSApp.currentEvent,e.type == .leftMouseDown{window.performDrag(with:e)};return true
-        case "hide":hideWindow();return true
+        case "hide","minimize":minimizeWindow();return true
         case "copy":NSPasteboard.general.clearContents();NSPasteboard.general.setString(p["text"] as? String ?? "",forType:.string);return true
         case "openURL":guard let s=p["url"] as? String,let u=URL(string:s),["https","http"].contains(u.scheme?.lowercased() ?? "") else{throw Failure("链接格式错误。")};NSWorkspace.shared.open(u);return true
         case "authorize":
@@ -341,6 +371,16 @@ final class DragHandle:NSView {
         case "sync":guard !syncBusy else{throw Failure("日程正在同步。")};syncBusy=true;defer{syncBusy=false};return try await feishu.sync(start:(p["start"] as? NSNumber)?.intValue ?? 0,end:(p["end"] as? NSNumber)?.intValue ?? 0)
         case "requestNotifications":let allowed=try await UNUserNotificationCenter.current().requestAuthorization(options:[.alert,.sound]);return ["allowed":allowed]
         case "notifications":return try await schedule(p)
+        case "exportAll":
+            guard financeStorageReady else{throw Failure(financeWarning.isEmpty ? "财务存储尚未准备好。":financeWarning)}
+            let wasUnlocked=financeVault.isUnlocked
+            defer{if !wasUnlocked{lockFinance()}}
+            if !wasUnlocked,try (financeVault.configured || financeVault.hasPendingRecords()){guard try promptFinance() else{return ["saved":false,"cancelled":true]}}
+            let formatter=DateFormatter();formatter.dateFormat="yyyy-MM-dd"
+            let panel=NSSavePanel();panel.nameFieldStringValue="重新定义价值-全部内容-"+formatter.string(from:Date())+".zip";panel.allowedContentTypes=[.zip];panel.canCreateDirectories=true;panel.title="导出全部内容（含财务和已同步日程）"
+            NSApp.activate(ignoringOtherApps:true);guard panel.runModal() == .OK,let url=panel.url else{return ["saved":false,"cancelled":true]}
+            let snapshot=try exportAllSnapshot(calendarEvents:p["calendarEvents"] as? [[String:Any]] ?? [])
+            try WorkspaceExport.write(snapshot,to:url);return ["saved":true,"financeIncluded":true]
         case "export":
             let panel=NSSavePanel();panel.nameFieldStringValue="重新定义价值记录-"+ISO8601DateFormatter().string(from:Date()).prefix(10)+".json";panel.allowedContentTypes=[.json];panel.canCreateDirectories=true
             let exported=try exportSnapshot(includeFinance:p["includeFinance"] as? Bool == true);let financeIncluded=exported["financeIncluded"] as? Bool == true

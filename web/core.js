@@ -93,6 +93,18 @@
     }
     return [...groups].sort(([a],[b])=>b.localeCompare(a)).map(([date,items])=>({date,items:items.sort((a,b)=>(b.record.updatedAt||b.record.createdAt||0)-(a.record.updatedAt||a.record.createdAt||0)||b.index-a.index).map(x=>x.record)}));
   }
+  function workDone(record,kind=record.kind) {
+    return kind==='tasks'?Boolean(record.done):kind==='projects'?projectDone(record):['business','development'].includes(kind)&&record.status==='done';
+  }
+  function completedLast(groups,kind) {
+    const active=[],completed=[];
+    for(const group of groups){
+      const pending=group.items.filter(record=>!workDone(record,kind)),done=group.items.filter(record=>workDone(record,kind));
+      if(pending.length)active.push({...group,items:pending});
+      if(done.length)completed.push({...group,history:false,completed:true,items:done});
+    }
+    return [...active,...completed.sort((a,b)=>b.date.localeCompare(a.date))];
+  }
   function taskTimeline(tasks,today=new Date()) {
     const day=key(today),groups=new Map(),clock=t=>typeof t.time==='string'&&/^([01]\d|2[0-3]):[0-5]\d$/.test(t.time)?t.time:'99:99';
     for(const [index,record] of tasks.entries()){
@@ -110,18 +122,39 @@
     const [whole,fraction='']=text.split('.'),amount=Number(whole)*100+Number(fraction.padEnd(2,'0'));
     return Number.isSafeInteger(amount)&&amount>0?amount:null;
   }
+  function financeStage(record) {
+    if(record.type!=='income')return null;
+    return record.status==='settled'?'revenue':record.status==='negotiating'?'negotiating':record.status==='delivery'?'delivery':'pending';
+  }
+  function nextFinanceStatus(record) {
+    if(!record||record.type!=='income'||record.archived||record.deletedAt)return null;
+    return {negotiating:'delivery',delivery:'pending',pending:'settled'}[financeStage(record)]||null;
+  }
+  function financeRecords(records,stage='all',view='active') {
+    return records.filter(r=>{
+      if(view==='deleted'?!r.deletedAt:r.deletedAt||Boolean(r.archived)!==(view==='archived'))return false;
+      return stage==='all'||(stage==='forecast'?r.type==='income':financeStage(r)===stage)&&Number.isSafeInteger(r.amountCents)&&r.amountCents>0;
+    });
+  }
   function financeTotals(records) {
-    const totals={negotiating:0,delivery:0,pending:0,revenue:0};
+    const totals={negotiating:0,delivery:0,pending:0,forecast:0,revenue:0};
     for(const r of records){
-      if(r.archived||r.type!=='income'||!Number.isSafeInteger(r.amountCents)||r.amountCents<=0)continue;
-      const bucket=r.status==='settled'?'revenue':r.status==='negotiating'?'negotiating':r.status==='delivery'?'delivery':'pending';
-      totals[bucket]+=r.amountCents;
+      if(r.archived||r.deletedAt||r.type!=='income'||!Number.isSafeInteger(r.amountCents)||r.amountCents<=0)continue;
+      totals[financeStage(r)]+=r.amountCents;
+      totals.forecast+=r.amountCents;
     }
     return totals;
   }
+  function reviewEntries(state) {
+    const submitted=state.reviewSubmitted||{},seen=new Set();
+    const legacy=Object.entries(state.thoughts||{}).filter(([date,text])=>validDate(date)&&typeof text==='string'&&text.trim()).map(([date,text])=>({id:date,date,text,legacy:true,submittedAt:submitted[date]||0,updatedAt:submitted[date]||0}));
+    legacy.forEach(r=>seen.add(r.id));
+    const added=(Array.isArray(state.reviews)?state.reviews:[]).filter(r=>r&&typeof r.id==='string'&&r.id&&!seen.has(r.id)&&validDate(r.date)&&typeof r.text==='string'&&r.text.trim()&&(seen.add(r.id),true)).map(r=>({...r,legacy:false}));
+    return [...legacy,...added];
+  }
   function workFeed(state) {
     const work=['tasks','projects','business','development'].flatMap(kind=>(state[kind]||[]).filter(r=>!r.archived).map(r=>({...r,kind,date:recordDate(r),title:kind==='projects'?r.name:r.title})));
-    const reviews=Object.entries(state.thoughts||{}).filter(([date,text])=>validDate(date)&&typeof text==='string'&&text.trim()).map(([date,text])=>({id:date,kind:'review',date,title:'复盘',text}));
+    const reviews=reviewEntries(state).map(r=>({...r,kind:'review',title:'复盘'}));
     const memos=(state.memos||[]).filter(r=>!r.archived&&typeof r.text==='string'&&r.text.trim()).map(r=>({...r,kind:'memo',date:recordDate(r),title:'备忘'}));
     return [...work,...reviews,...memos];
   }
@@ -142,6 +175,6 @@
     return [...groups.values()].sort((a,b)=>Number(a.history)-Number(b.history)||(a.history?b.date.localeCompare(a.date):a.date.localeCompare(b.date)))
       .map(g=>({...g,items:g.items.sort((a,b)=>clock(a.record).localeCompare(clock(b.record))||kinds.indexOf(a.record.kind)-kinds.indexOf(b.record.kind)||(b.record.updatedAt||b.record.createdAt||0)-(a.record.updatedAt||a.record.createdAt||0)||b.index-a.index).map(x=>x.record)}));
   }
-  const api={pad,key,fromKey,monthKey,bounds,normalize,onDay,dedupe,cachedEvents,eventTimeline,tasksOnDay,toggleTask,projectDone,toggleProject,untilNextDay,shiftMonth,validDate,recordsOnDay,toggleRecord,recordDate,timelineGroups,taskTimeline,amountCents,financeTotals,workFeed,overviewGroups};
+  const api={pad,key,fromKey,monthKey,bounds,normalize,onDay,dedupe,cachedEvents,eventTimeline,tasksOnDay,toggleTask,projectDone,toggleProject,untilNextDay,shiftMonth,validDate,recordsOnDay,toggleRecord,recordDate,timelineGroups,workDone,completedLast,taskTimeline,amountCents,financeStage,nextFinanceStatus,financeRecords,financeTotals,reviewEntries,workFeed,overviewGroups};
   if(typeof module!=='undefined')module.exports=api; else root.Core=api;
 })(typeof window!=='undefined'?window:globalThis);
